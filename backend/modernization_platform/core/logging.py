@@ -18,6 +18,8 @@ _REDACT_PATTERNS = [
     re.compile(r"(?i)(token['\":\s=]+)[^\s,;'\"]+"),
     re.compile(r"(?i)(api[_-]?key['\":\s=]+)[^\s,;'\"]+"),
     re.compile(r"(?i)(authorization['\":\s=]+)[^\s,;'\"]+"),
+    re.compile(r"(?i)((?:set-)?cookie['\":\s=]+)[^\r\n]+"),
+    re.compile(r"(?i)(client[_-]?secret['\":\s=]+)[^\s,;'\"]+"),
     re.compile(
         r"-----BEGIN [A-Z ]+ PRIVATE KEY-----.*?-----END [A-Z ]+ PRIVATE KEY-----", re.DOTALL
     ),

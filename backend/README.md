@@ -14,7 +14,7 @@ uv sync --frozen
 uv run uvicorn modernization_platform.main:app --host 127.0.0.1 --port 8000 --reload
 
 # 3. Run tests with coverage
-uv run pytest --cov=src/modernization_platform --cov-report=term-missing
+uv run pytest --cov=modernization_platform --cov-report=term-missing
 ```
 
 See [`../docs/development-setup.md`](../docs/development-setup.md) for full setup instructions.

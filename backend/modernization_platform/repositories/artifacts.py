@@ -8,6 +8,8 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from modernization_platform.db.models.artifact import Artifact
+from modernization_platform.db.models.identity import JobMember
+from modernization_platform.db.models.job import Job
 from modernization_platform.repositories.base import BaseRepository
 
 logger = logging.getLogger(__name__)
@@ -19,7 +21,7 @@ class ArtifactRepository(BaseRepository[Artifact]):
     def __init__(self, session: AsyncSession) -> None:
         super().__init__(session)
 
-    async def append_artifact(
+    async def _append_artifact_after_authorization(
         self,
         job_id: uuid.UUID,
         artifact_type: str,
@@ -59,18 +61,60 @@ class ArtifactRepository(BaseRepository[Artifact]):
             await self.session.flush()
             return artifact
         except Exception as exc:
-            raise self._translate_error("append_artifact", exc) from exc
+            raise self._translate_error("_append_artifact_after_authorization", exc) from exc
 
-    async def get_by_id(self, artifact_id: uuid.UUID) -> Artifact | None:
-        """Retrieve an artifact by its primary key ID."""
+    async def _get_by_id_unscoped(self, artifact_id: uuid.UUID) -> Artifact | None:
+        """Internal lookup for persistence workflows after authorization."""
         try:
             stmt = select(Artifact).where(Artifact.id == artifact_id)
             result = await self.session.execute(stmt)
             return result.scalar_one_or_none()
         except Exception as exc:
-            raise self._translate_error("get_by_id", exc) from exc
+            raise self._translate_error("_get_by_id_unscoped", exc) from exc
 
-    async def get_by_job_and_type_version(
+    async def get_by_id_scoped(
+        self,
+        *,
+        artifact_id: uuid.UUID,
+        tenant_id: uuid.UUID,
+        user_id: uuid.UUID,
+        membership_id: uuid.UUID,
+        tenant_admin: bool = False,
+    ) -> Artifact | None:
+        """Retrieve an artifact only through its authorized parent job scope."""
+        try:
+            statement = (
+                select(Artifact)
+                .join(Job, Job.id == Artifact.job_id)
+                .where(Artifact.id == artifact_id, Job.tenant_id == tenant_id)
+            )
+            if not tenant_admin:
+                member_access = (
+                    select(JobMember.id)
+                    .where(
+                        JobMember.job_id == Job.id,
+                        JobMember.membership_id == membership_id,
+                    )
+                    .exists()
+                )
+                statement = statement.where((Job.owner_user_id == user_id) | member_access)
+            result = await self.session.execute(statement)
+            return result.scalar_one_or_none()
+        except Exception as exc:
+            raise self._translate_error("get_by_id_scoped", exc) from exc
+
+    async def _get_by_ids_unscoped(self, artifact_ids: list[uuid.UUID]) -> list[Artifact]:
+        """Retrieve artifact rows used to validate lineage ownership."""
+        try:
+            if not artifact_ids:
+                return []
+            stmt = select(Artifact).where(Artifact.id.in_(artifact_ids))
+            result = await self.session.execute(stmt)
+            return list(result.scalars().all())
+        except Exception as exc:
+            raise self._translate_error("get_by_ids", exc) from exc
+
+    async def _get_by_job_and_type_version_unscoped(
         self,
         job_id: uuid.UUID,
         artifact_type: str,
@@ -88,7 +132,7 @@ class ArtifactRepository(BaseRepository[Artifact]):
         except Exception as exc:
             raise self._translate_error("get_by_job_and_type_version", exc) from exc
 
-    async def list_artifacts_by_job(
+    async def _list_artifacts_by_job_unscoped(
         self,
         job_id: uuid.UUID,
         artifact_type: str | None = None,

@@ -93,3 +93,24 @@ This migration creates:
 - Composite unique constraints (e.g., `(job_id, type, version)`).
 - Check constraints enforcing state enums and positive attempt counters.
 - Performance indexes on frequently queried foreign keys and status fields.
+
+## 5. Stabilization Migrations
+
+Two reversible forward migrations reconcile the historical baseline with the authoritative schema
+without rewriting revision `0001_initial_schema`:
+
+- `0002_positive_constraints` adds the documented positive artifact-version and module-attempt
+  constraints.
+- `0003_native_uuid_columns` converts identifier and foreign-key columns from the baseline
+  `VARCHAR(36)` representation to native PostgreSQL `UUID`, then recreates the original deletion
+  policies.
+
+`0004_authentication_rbac_isolation` adds organization tenants, externally linked users, tenant
+memberships with the exact four-role check, revocable token-session hashes, and explicit job-member
+grants. It adds nullable `tenant_id` and `owner_user_id` references to existing jobs and nullable
+`actor_user_id` references to gate decisions and audit events. Nullable job scope preserves existing
+rows; secured reads deny rows until an explicit ownership backfill assigns them. Downgrade drops only
+the new 01.4 tables, columns, indexes, and constraints.
+
+The PostgreSQL migration test runs a clean upgrade to head, validates tables, UUID types, and check
+constraints, downgrades to base, and restores head for subsequent development use.

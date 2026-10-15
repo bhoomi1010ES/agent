@@ -21,6 +21,7 @@ from modernization_platform.config.settings import Settings, get_settings
 from modernization_platform.core.logging import setup_logging
 from modernization_platform.core.middleware import (
     CorrelationIdMiddleware,
+    RequestBodyLimitMiddleware,
     register_exception_handlers,
 )
 from modernization_platform.db.engine import (
@@ -118,7 +119,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             header_name=app_settings.correlation_header_name,
         )
 
-        # 3. Add CORS middleware
+        # 3. Bound request bodies before Pydantic parsing and protected operations.
+        app.add_middleware(
+            RequestBodyLimitMiddleware,
+            max_body_bytes=app_settings.max_request_body_bytes,
+        )
+
+        # 4. Add CORS middleware
         if app_settings.cors_allowed_origins:
             app.add_middleware(
                 CORSMiddleware,
@@ -129,14 +136,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 expose_headers=[app_settings.correlation_header_name],
             )
 
-        # 4. Add Trusted Host middleware if configured
+        # 5. Add Trusted Host middleware if configured
         if app_settings.allowed_hosts and "*" not in app_settings.allowed_hosts:
             app.add_middleware(
                 TrustedHostMiddleware,
                 allowed_hosts=app_settings.allowed_hosts,
             )
 
-        # 5. Mount API routes
+        # 6. Mount API routes
         # Mount top-level root endpoint (GET /)
         app.include_router(root_router)
 

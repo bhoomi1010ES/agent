@@ -1,7 +1,7 @@
 """Unit tests for database configuration validation, URL masking, and production security invariants."""
 
 import pytest
-from pydantic import ValidationError
+from pydantic import SecretStr, ValidationError
 
 from modernization_platform.config.settings import Settings
 
@@ -98,7 +98,26 @@ def test_production_valid_configuration() -> None:
         db_ssl_mode="require",
         allowed_hosts=["prod.example.com"],
         cors_allowed_origins=["https://prod.example.com"],
+        auth_jwt_issuer="https://identity.example.com",
+        auth_jwt_audience="modernization-api",
+        auth_jwt_public_key=SecretStr("test-public-key"),
     )
     assert settings.environment == "production"
     assert settings.db_ssl_mode == "require"
     assert settings.db_echo is False
+
+
+def test_production_rejects_blank_jwt_verification_key() -> None:
+    """Verify staging and production require usable JWT verification material."""
+    with pytest.raises(ValidationError, match="JWT issuer, audience, and verification key"):
+        Settings(
+            environment="production",
+            debug=False,
+            database_url="postgresql+asyncpg://prod_user:strong_prod_pass_999@db.prod.internal:5432/prod_db",
+            db_ssl_mode="require",
+            allowed_hosts=["prod.example.com"],
+            cors_allowed_origins=["https://prod.example.com"],
+            auth_jwt_issuer="https://identity.example.com",
+            auth_jwt_audience="modernization-api",
+            auth_jwt_public_key=SecretStr("  "),
+        )

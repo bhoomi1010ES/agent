@@ -4,7 +4,7 @@ import logging
 
 from fastapi import APIRouter
 
-from modernization_platform.api.v1.endpoints import health
+from modernization_platform.api.v1.endpoints import health, security
 
 logger = logging.getLogger(__name__)
 
@@ -12,6 +12,7 @@ api_v1_router = APIRouter()
 
 # Register core v1 health endpoints
 api_v1_router.include_router(health.router, prefix="/health", tags=["Health"])
+api_v1_router.include_router(security.router, tags=["Security"])
 
 # Future phase extension points:
 # api_v1_router.include_router(jobs.router, prefix="/jobs", tags=["Jobs"])

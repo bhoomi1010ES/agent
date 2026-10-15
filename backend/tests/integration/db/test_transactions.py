@@ -6,6 +6,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from modernization_platform.core.exceptions import PersistenceError
 from modernization_platform.db.models.job import Job
 from modernization_platform.db.models.module import Module
 from modernization_platform.db.session import transactional_session
@@ -21,12 +22,21 @@ async def test_atomic_multi_record_transaction_success(db_engine: AsyncEngine) -
         bind=db_engine, class_=AsyncSession, expire_on_commit=False
     )
 
-    async with transactional_session(session_factory) as session:
-        job = Job(id=job_id, name="Atomic Job", status="PENDING")
+    async with transactional_session(db_engine) as session:
+        job = Job(
+            id=job_id,
+            owner="transaction-test",
+            source_ref="https://example.invalid/legacy/atomic-success.git",
+        )
         session.add(job)
         await session.flush()
 
-        module = Module(id=module_id, job_id=job.id, name="Atomic Module", status="PENDING")
+        module = Module(
+            id=module_id,
+            job_id=job.id,
+            name="Atomic Module",
+            legacy_paths=["legacy/atomic.cob"],
+        )
         session.add(module)
 
     # In a new session, verify both records are persisted
@@ -50,14 +60,24 @@ async def test_atomic_multi_record_transaction_rollback_leaves_no_partial_state(
         bind=db_engine, class_=AsyncSession, expire_on_commit=False
     )
 
-    with pytest.raises(ValueError, match="Simulated business logic failure during modernization"):
-        async with transactional_session(session_factory) as session:
-            job = Job(id=job_id, name="Uncommitted Job", status="PENDING")
+    with pytest.raises(
+        PersistenceError,
+        match="Simulated business logic failure during modernization",
+    ):
+        async with transactional_session(db_engine) as session:
+            job = Job(
+                id=job_id,
+                owner="transaction-test",
+                source_ref="https://example.invalid/legacy/atomic-rollback.git",
+            )
             session.add(job)
             await session.flush()
 
             module = Module(
-                id=module_id, job_id=job.id, name="Uncommitted Module", status="PENDING"
+                id=module_id,
+                job_id=job.id,
+                name="Uncommitted Module",
+                legacy_paths=["legacy/uncommitted.cob"],
             )
             session.add(module)
             await session.flush()

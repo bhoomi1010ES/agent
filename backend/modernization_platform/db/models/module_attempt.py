@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import CheckConstraint, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from modernization_platform.db.base import Base, TimestampMixin
@@ -52,7 +52,6 @@ class ModuleAttempt(Base, TimestampMixin):
         String(50),
         nullable=False,
         default="in_progress",
-        index=True,
         comment="Attempt status: in_progress, success, repair_needed, failed, escalated",
     )
     failure_summary: Mapped[str | None] = mapped_column(
@@ -80,6 +79,10 @@ class ModuleAttempt(Base, TimestampMixin):
     )
 
     __table_args__ = (
+        CheckConstraint(
+            "attempt_number > 0",
+            name="number_positive",
+        ),
         UniqueConstraint(
             "module_id",
             "attempt_number",

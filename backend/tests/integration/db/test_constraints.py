@@ -8,6 +8,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from modernization_platform.db.models.artifact import Artifact
+from modernization_platform.db.models.identity import Tenant, TenantMembership, UserAccount
 from modernization_platform.db.models.job import Job
 from modernization_platform.db.models.module import Module
 from modernization_platform.db.models.module_attempt import ModuleAttempt
@@ -21,14 +22,37 @@ async def test_foreign_key_constraint_rejects_invalid_parent(db_session: AsyncSe
     invalid_artifact = Artifact(
         id=uuid.uuid4(),
         job_id=non_existent_job_id,
-        name="specification.md",
-        artifact_type="SPECIFICATION",
-        storage_uri="s3://artifacts/nonexistent.md",
+        type="SPECIFICATION",
+        storage_ref="s3://artifacts/nonexistent.md",
         version=1,
+        content_hash="a" * 64,
     )
     db_session.add(invalid_artifact)
 
     with pytest.raises(IntegrityError, match="foreign key constraint"):
+        await db_session.commit()
+
+    await db_session.rollback()
+
+
+@pytest.mark.asyncio
+async def test_membership_rejects_roles_outside_the_baseline_catalog(
+    db_session: AsyncSession,
+) -> None:
+    """Verify the database role check prevents unrecognized privilege labels."""
+    tenant = Tenant(slug="role-constraint", display_name="Role Constraint")
+    user = UserAccount(issuer="https://identity.test", subject="role-constraint-user")
+    db_session.add_all([tenant, user])
+    await db_session.flush()
+    db_session.add(
+        TenantMembership(
+            tenant_id=tenant.id,
+            user_id=user.id,
+            role="superuser",
+        )
+    )
+
+    with pytest.raises(IntegrityError, match="role_allowed"):
         await db_session.commit()
 
     await db_session.rollback()
@@ -41,8 +65,8 @@ async def test_unique_constraint_rejects_duplicate_module_attempt(
     """Verify unique constraint uq_module_attempt_number rejects duplicate attempt numbers per module."""
     job = Job(
         id=uuid.uuid4(),
-        name="Module Attempt Uniqueness Test Job",
-        status="PENDING",
+        owner="constraint-test",
+        source_ref="https://example.invalid/legacy/unique-attempt.git",
     )
     db_session.add(job)
     await db_session.flush()
@@ -51,8 +75,8 @@ async def test_unique_constraint_rejects_duplicate_module_attempt(
         id=uuid.uuid4(),
         job_id=job.id,
         name="CustomerBillingModule",
-        status="PENDING",
-        complexity_score=4,
+        legacy_paths=["legacy/customer-billing.cob"],
+        risk_score=4.0,
     )
     db_session.add(module)
     await db_session.flush()
@@ -60,9 +84,8 @@ async def test_unique_constraint_rejects_duplicate_module_attempt(
     attempt1 = ModuleAttempt(
         id=uuid.uuid4(),
         module_id=module.id,
-        job_id=job.id,
         attempt_number=1,
-        status="RUNNING",
+        branch="job/unique-attempt/customer-billing/1",
     )
     db_session.add(attempt1)
     await db_session.flush()
@@ -71,9 +94,8 @@ async def test_unique_constraint_rejects_duplicate_module_attempt(
     attempt2 = ModuleAttempt(
         id=uuid.uuid4(),
         module_id=module.id,
-        job_id=job.id,
         attempt_number=1,
-        status="RUNNING",
+        branch="job/unique-attempt/customer-billing/duplicate",
     )
     db_session.add(attempt2)
 
@@ -90,8 +112,8 @@ async def test_check_constraint_rejects_non_positive_attempt_number(
     """Verify check constraint ck_module_attempt_number_positive enforces attempt_number > 0."""
     job = Job(
         id=uuid.uuid4(),
-        name="Check Constraint Test Job",
-        status="PENDING",
+        owner="constraint-test",
+        source_ref="https://example.invalid/legacy/positive-attempt.git",
     )
     db_session.add(job)
     await db_session.flush()
@@ -100,7 +122,7 @@ async def test_check_constraint_rejects_non_positive_attempt_number(
         id=uuid.uuid4(),
         job_id=job.id,
         name="CheckModule",
-        status="PENDING",
+        legacy_paths=["legacy/check.cob"],
     )
     db_session.add(module)
     await db_session.flush()
@@ -108,9 +130,8 @@ async def test_check_constraint_rejects_non_positive_attempt_number(
     invalid_attempt = ModuleAttempt(
         id=uuid.uuid4(),
         module_id=module.id,
-        job_id=job.id,
         attempt_number=0,  # Invalid: <= 0 violates check constraint
-        status="RUNNING",
+        branch="job/positive-attempt/check/0",
     )
     db_session.add(invalid_attempt)
 
@@ -127,8 +148,8 @@ async def test_cascading_deletion_removes_child_modules(
     """Verify ON DELETE CASCADE policy cleans up modules when parent job is deleted."""
     job = Job(
         id=uuid.uuid4(),
-        name="Cascade Test Job",
-        status="PENDING",
+        owner="constraint-test",
+        source_ref="https://example.invalid/legacy/cascade.git",
     )
     db_session.add(job)
     await db_session.flush()
@@ -137,7 +158,7 @@ async def test_cascading_deletion_removes_child_modules(
         id=uuid.uuid4(),
         job_id=job.id,
         name="CascadedChildModule",
-        status="PENDING",
+        legacy_paths=["legacy/cascade.cob"],
     )
     db_session.add(module)
     await db_session.commit()

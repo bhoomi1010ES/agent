@@ -32,6 +32,7 @@ dependencies = [
     "asyncpg>=0.30.0",
     "psycopg[binary]>=3.2.0",
     "greenlet>=3.1.1",
+    "pyjwt[crypto]>=2.10.0",
 ]
 
 [project.optional-dependencies]
@@ -46,7 +47,7 @@ dev = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/modernization_platform"]
+packages = ["modernization_platform"]
 
 [tool.ruff]
 line-length = 100
@@ -84,24 +85,20 @@ no_implicit_optional = true
 warn_redundant_casts = true
 warn_unused_ignores = true
 warn_no_return = true
-mypy_path = "src"
-
-[[tool.mypy.overrides]]
-module = "pythonjsonlogger.*"
-ignore_missing_imports = true
+mypy_path = "."
 
 [tool.pytest.ini_options]
 minversion = "8.0"
 addopts = "-ra -q --strict-markers"
 testpaths = ["tests"]
-pythonpath = ["src"]
+pythonpath = ["."]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 
 [tool.coverage.run]
-source = ["src/modernization_platform"]
+source = ["modernization_platform"]
 branch = true
-omit = ["*/tests/*", "src/modernization_platform/main.py"]
+omit = ["*/tests/*", "modernization_platform/main.py"]
 
 [tool.coverage.report]
 fail_under = 85

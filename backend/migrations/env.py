@@ -11,10 +11,10 @@ from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
-# Ensure application src directory is in sys.path
-_SRC_DIR = Path(__file__).resolve().parents[1] / "src"
-if str(_SRC_DIR) not in sys.path:
-    sys.path.insert(0, str(_SRC_DIR))
+# Ensure the backend package root is importable when Alembic is invoked directly.
+_BACKEND_DIR = Path(__file__).resolve().parents[1]
+if str(_BACKEND_DIR) not in sys.path:
+    sys.path.insert(0, str(_BACKEND_DIR))
 
 # Import all models to ensure metadata registration
 import modernization_platform.db.models  # noqa: E402, F401

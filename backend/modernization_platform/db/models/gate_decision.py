@@ -38,6 +38,13 @@ class GateDecision(Base):
         nullable=False,
         comment="Identity of human decision-maker (email or user ID)",
     )
+    actor_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        GUID,
+        ForeignKey("user_account.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+        comment="Stable authenticated actor; null only for legacy/system decisions",
+    )
     decision: Mapped[str] = mapped_column(
         String(50),
         nullable=False,

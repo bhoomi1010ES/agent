@@ -3,6 +3,9 @@
 
 This document specifies the authoritative relational schema, table structures, foreign keys, indexes, check constraints, and referential deletion policies implemented in Sub-Phase 01.2.
 
+Sub-Phase 01.4 extends this schema with tenant and identity structures described below and in
+[`../security/authentication-rbac-isolation.md`](../security/authentication-rbac-isolation.md).
+
 ---
 
 ## 1. Schema Overview
@@ -28,6 +31,23 @@ erDiagram
 ---
 
 ## 2. Entity Specifications
+
+### 2.0. Tenant and Identity Entities (Sub-Phase 01.4)
+
+Migration `0004_authentication_rbac_isolation` adds:
+
+- `tenant`: organization boundary with unique slug and active state.
+- `user_account`: minimum external identity mapping, unique on `(issuer, subject)`; display name
+  is descriptive and never an identity key.
+- `tenant_membership`: active user-to-tenant membership with a database check limiting roles to
+  `owner`, `reviewer`, `approver`, or `admin`, unique per tenant/user.
+- `auth_session`: hash of issuer plus JWT ID, expiry, revocation timestamp, and authentication
+  method; raw credentials are not stored.
+- `job_member`: explicit membership grants, unique per job/membership.
+
+`job` gains nullable `tenant_id` and `owner_user_id` foreign keys to preserve historical rows.
+`gate_decision` and `audit_event` gain nullable `actor_user_id` references to the stable local
+account. Application scoped queries deny jobs with no assigned tenant or owner.
 
 ### 2.1. `job`
 Top-level orchestration job managing legacy codebase modernization.

@@ -13,29 +13,32 @@ async def test_audit_event_append_and_query(db_session: AsyncSession) -> None:
     job_repo = JobRepository(db_session)
     audit_repo = AuditEventRepository(db_session)
 
-    job = await job_repo.create_job(name="Audited Modernization Job")
+    job = await job_repo.create_job(
+        owner="dev_lead_42",
+        source_ref="https://example.invalid/legacy/audited-job.git",
+    )
     await db_session.commit()
 
     event = await audit_repo.append_event(
-        event_type="JOB_STARTED",
-        actor_identity="user:dev_lead_42",
+        action="JOB_STARTED",
+        actor="user:dev_lead_42",
         job_id=job.id,
         correlation_id="corr-req-789",
-        metadata_payload={"initiated_by": "api_trigger", "source_branch": "legacy/v2.4"},
+        payload={"initiated_by": "api_trigger", "source_branch": "legacy/v2.4"},
     )
     await db_session.commit()
 
     assert event.id is not None
-    assert event.timestamp is not None
-    assert event.event_type == "JOB_STARTED"
-    assert event.actor_identity == "user:dev_lead_42"
+    assert event.event_time is not None
+    assert event.action == "JOB_STARTED"
+    assert event.actor == "user:dev_lead_42"
     assert event.correlation_id == "corr-req-789"
 
     # Query events for the job
     events = await audit_repo.list_events_by_job(job.id)
     assert len(events) == 1
     assert events[0].id == event.id
-    assert events[0].metadata_payload == {
+    assert events[0].payload == {
         "initiated_by": "api_trigger",
         "source_branch": "legacy/v2.4",
     }

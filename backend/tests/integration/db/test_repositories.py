@@ -1,8 +1,11 @@
 """PostgreSQL integration tests for repository layer CRUD, pagination, and queries."""
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from modernization_platform.db.models.gate_decision import GateDecision
+from modernization_platform.db.models.identity import UserAccount
 from modernization_platform.repositories.agent_runs import AgentRunRepository
 from modernization_platform.repositories.artifacts import ArtifactRepository
 from modernization_platform.repositories.gates import GateRepository
@@ -19,25 +22,28 @@ async def test_job_repository_crud(db_session: AsyncSession) -> None:
 
     # 1. Create
     job = await repo.create_job(
-        name="Payment Modernization Job", repository_url="https://github.com/example/pay"
+        owner="payments-team",
+        source_ref="https://github.com/example/pay",
+        target_stack_spec={"language": "python"},
     )
     await db_session.commit()
     assert job.id is not None
-    assert job.status == "PENDING"
+    assert job.status == "pending"
 
     # 2. Get by ID
-    retrieved = await repo.get_by_id(job.id)
+    retrieved = await db_session.get(type(job), job.id)
     assert retrieved is not None
-    assert retrieved.name == "Payment Modernization Job"
+    assert retrieved.owner == "payments-team"
+    assert retrieved.source_ref == "https://github.com/example/pay"
 
     # 3. Update status
-    updated = await repo.update_status(job.id, "RUNNING")
+    updated = await repo.update_status(job.id, "running")
     await db_session.commit()
-    assert updated.status == "RUNNING"
+    assert updated is not None
+    assert updated.status == "running"
 
     # 4. List paginated
-    items, total = await repo.list_jobs(offset=0, limit=10, status_filter="RUNNING")
-    assert total >= 1
+    items = await repo._list_jobs_unscoped(offset=0, limit=10, status="running")
     assert any(j.id == job.id for j in items)
 
 
@@ -47,29 +53,32 @@ async def test_artifact_repository_operations(db_session: AsyncSession) -> None:
     job_repo = JobRepository(db_session)
     artifact_repo = ArtifactRepository(db_session)
 
-    job = await job_repo.create_job(name="Artifact Test Job")
-    await db_session.commit()
-
-    artifact = await artifact_repo.create_artifact(
-        job_id=job.id,
-        name="ir_ast.json",
-        artifact_type="INTERMEDIATE_REPRESENTATION",
-        storage_uri="s3://modernization-artifacts/ir_ast.json",
-        scope="GLOBAL",
-        version=1,
-        content_hash="sha256:abc12345",
-        metadata_payload={"node_count": 1420},
+    job = await job_repo.create_job(
+        owner="artifact-test",
+        source_ref="https://example.invalid/legacy/artifacts.git",
     )
     await db_session.commit()
 
-    retrieved = await artifact_repo.get_by_id(artifact.id)
+    artifact = await artifact_repo._append_artifact_after_authorization(
+        job_id=job.id,
+        artifact_type="INTERMEDIATE_REPRESENTATION",
+        storage_ref="s3://modernization-artifacts/ir_ast.json",
+        version=1,
+        content_hash="a" * 64,
+        artifact_metadata={"node_count": 1420},
+    )
+    await db_session.commit()
+
+    retrieved = await db_session.get(type(artifact), artifact.id)
     assert retrieved is not None
-    assert retrieved.content_hash == "sha256:abc12345"
-    assert retrieved.metadata_payload == {"node_count": 1420}
+    assert retrieved.content_hash == "a" * 64
+    assert retrieved.artifact_metadata == {"node_count": 1420}
 
     # Test scope and version lookup
-    versioned = await artifact_repo.get_by_scope_and_version(
-        job_id=job.id, name="ir_ast.json", scope="GLOBAL", version=1
+    versioned = await artifact_repo._get_by_job_and_type_version_unscoped(
+        job_id=job.id,
+        artifact_type="INTERMEDIATE_REPRESENTATION",
+        version=1,
     )
     assert versioned is not None
     assert versioned.id == artifact.id
@@ -82,27 +91,30 @@ async def test_module_and_attempt_repositories(db_session: AsyncSession) -> None
     module_repo = ModuleRepository(db_session)
     attempt_repo = ModuleAttemptRepository(db_session)
 
-    job = await job_repo.create_job(name="Module Test Job")
+    job = await job_repo.create_job(
+        owner="module-test",
+        source_ref="https://example.invalid/legacy/modules.git",
+    )
     await db_session.commit()
 
     module = await module_repo.create_module(
         job_id=job.id,
         name="BillingEngine",
-        file_path="src/billing/engine.cob",
-        complexity_score=5,
+        legacy_paths=["src/billing/engine.cob"],
+        risk_score=5.0,
     )
     await db_session.commit()
 
     attempt = await attempt_repo.create_attempt(
         module_id=module.id,
-        job_id=job.id,
         attempt_number=1,
-        status="RUNNING",
+        branch=f"job/{job.id}/billing-engine/1",
     )
     await db_session.commit()
 
-    retrieved_attempt = await attempt_repo.get_attempt_by_number(module.id, 1)
-    assert retrieved_attempt is not None
+    attempts = await attempt_repo.list_by_module(module.id)
+    assert len(attempts) == 1
+    retrieved_attempt = attempts[0]
     assert retrieved_attempt.id == attempt.id
     assert retrieved_attempt.attempt_number == 1
 
@@ -113,21 +125,28 @@ async def test_agent_run_repository(db_session: AsyncSession) -> None:
     job_repo = JobRepository(db_session)
     agent_repo = AgentRunRepository(db_session)
 
-    job = await job_repo.create_job(name="Agent Test Job")
-    await db_session.commit()
-
-    agent_run = await agent_repo.create_agent_run(
-        job_id=job.id,
-        agent_type="DISCOVERY_AGENT",
-        model_name="deepseek-r1",
-        model_provider="openrouter",
+    job = await job_repo.create_job(
+        owner="agent-test",
+        source_ref="https://example.invalid/legacy/agent-run.git",
     )
     await db_session.commit()
 
-    updated = await agent_repo.update_status(agent_run.id, "COMPLETED", {"tokens_used": 1540})
+    agent_run = await agent_repo.record_run(
+        job_id=job.id,
+        agent="DISCOVERY_AGENT",
+        model="deepseek-r1",
+        prompt_version="1.0.0",
+        tokens_input=1540,
+        duration_ms=250,
+    )
     await db_session.commit()
-    assert updated.status == "COMPLETED"
-    assert updated.output_metrics == {"tokens_used": 1540}
+
+    retrieved = await agent_repo.get_by_id(agent_run.id)
+    assert retrieved is not None
+    assert retrieved.tokens_input == 1540
+
+    runs = await agent_repo.list_runs_by_job(job.id, agent="DISCOVERY_AGENT")
+    assert [run.id for run in runs] == [agent_run.id]
 
 
 @pytest.mark.asyncio
@@ -136,31 +155,32 @@ async def test_test_repository_cases_and_results(db_session: AsyncSession) -> No
     job_repo = JobRepository(db_session)
     test_repo = TestRepository(db_session)
 
-    job = await job_repo.create_job(name="Test Execution Job")
+    job = await job_repo.create_job(
+        owner="verification-test",
+        source_ref="https://example.invalid/legacy/test-execution.git",
+    )
     await db_session.commit()
 
     test_case = await test_repo.create_test_case(
         job_id=job.id,
-        name="test_calculate_tax_exemption",
-        test_type="EQUIVALENCE",
-        input_payload={"customer_type": "EXEMPT", "amount": 100.0},
-        expected_output={"tax": 0.0},
+        suite_version=1,
+        layer="EQUIVALENCE",
+        module_name="tax-calculation",
+        legacy_capture_ref="s3://captures/test_calculate_tax_exemption.json",
     )
     await db_session.commit()
 
     result = await test_repo.record_test_result(
         test_case_id=test_case.id,
-        job_id=job.id,
-        status="PASSED",
-        actual_output={"tax": 0.0},
-        execution_time_ms=14.5,
+        system="converted",
+        outcome="pass",
     )
     await db_session.commit()
 
-    results = await test_repo.list_results_for_case(test_case.id)
+    results = await test_repo.list_results_by_test_case(test_case.id)
     assert len(results) == 1
     assert results[0].id == result.id
-    assert results[0].status == "PASSED"
+    assert results[0].outcome == "pass"
 
 
 @pytest.mark.asyncio
@@ -169,27 +189,39 @@ async def test_gate_repository_and_decisions(db_session: AsyncSession) -> None:
     job_repo = JobRepository(db_session)
     gate_repo = GateRepository(db_session)
 
-    job = await job_repo.create_job(name="Approval Job")
+    job = await job_repo.create_job(
+        owner="architecture-team",
+        source_ref="https://example.invalid/legacy/approval.git",
+    )
     await db_session.commit()
 
     gate = await gate_repo.create_gate(
         job_id=job.id,
-        gate_level="G1_DISCOVERY_PLAN",
-        description="Requires architecture team sign-off before transformation",
+        gate_type="G1_DISCOVERY_PLAN",
+        needs_human_flags=[{"reason": "architecture sign-off required"}],
+    )
+    actor = UserAccount(
+        issuer="https://identity.repository-test",
+        subject="lead-architect",
+        display_name="Lead Architect",
+    )
+    db_session.add(actor)
+    await db_session.commit()
+
+    decision = await gate_repo.record_authorized_decision(
+        gate=gate,
+        actor_user_id=actor.id,
+        decision="approved",
+        feedback="Decomposition plan is sound and verified against legacy rules.",
     )
     await db_session.commit()
 
-    decision = await gate_repo.record_decision(
-        gate_id=gate.id,
-        job_id=job.id,
-        decision="APPROVED",
-        approver_identity="lead_architect@enterprise.org",
-        rationale="Decomposition plan is sound and verified against legacy rules.",
-    )
-    await db_session.commit()
-
-    retrieved_gate = await gate_repo.get_gate_with_decisions(gate.id)
+    retrieved_gate = await db_session.get(type(gate), gate.id)
     assert retrieved_gate is not None
-    assert retrieved_gate.status == "APPROVED"
-    assert len(retrieved_gate.decisions) == 1
-    assert retrieved_gate.decisions[0].id == decision.id
+    assert retrieved_gate.state == "approved"
+
+    decision_result = await db_session.execute(
+        select(GateDecision).where(GateDecision.gate_id == gate.id)
+    )
+    decisions = list(decision_result.scalars().all())
+    assert [item.id for item in decisions] == [decision.id]

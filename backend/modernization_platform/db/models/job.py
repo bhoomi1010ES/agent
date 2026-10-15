@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import Index, String, Text
+from sqlalchemy import ForeignKey, Index, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -36,6 +36,20 @@ class Job(Base, TimestampMixin):
         nullable=False,
         index=True,
         comment="Owner user or organization identity",
+    )
+    tenant_id: Mapped[uuid.UUID | None] = mapped_column(
+        GUID,
+        ForeignKey("tenant.id", ondelete="RESTRICT"),
+        nullable=True,
+        index=True,
+        comment="Tenant authorization boundary; null only for pre-01.4 legacy rows",
+    )
+    owner_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        GUID,
+        ForeignKey("user_account.id", ondelete="RESTRICT"),
+        nullable=True,
+        index=True,
+        comment="Stable owner identity; null only for pre-01.4 legacy rows",
     )
     status: Mapped[str] = mapped_column(
         String(50),
@@ -103,4 +117,5 @@ class Job(Base, TimestampMixin):
     __table_args__ = (
         Index("ix_job_status_created_at", "status", "created_at"),
         Index("ix_job_owner_created_at", "owner", "created_at"),
+        Index("ix_job_tenant_owner", "tenant_id", "owner_user_id"),
     )

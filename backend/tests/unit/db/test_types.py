@@ -1,17 +1,32 @@
 """Unit tests for custom SQLAlchemy types (UTCDateTime, GUID)."""
 
 import uuid
+from collections.abc import Callable
 from datetime import UTC, datetime
+from typing import cast
 
 from sqlalchemy.dialects import postgresql, sqlite
+from sqlalchemy.engine import Dialect
 
 from modernization_platform.db.types import GUID, UTCDateTime
+
+
+def _postgresql_dialect() -> Dialect:
+    """Return SQLAlchemy's PostgreSQL dialect through its typed interface."""
+    factory = cast(Callable[[], Dialect], postgresql.dialect)
+    return factory()
+
+
+def _sqlite_dialect() -> Dialect:
+    """Return SQLAlchemy's SQLite dialect through its typed interface."""
+    factory = cast(Callable[[], Dialect], sqlite.dialect)
+    return factory()
 
 
 def test_utc_datetime_process_bind_param() -> None:
     """Verify UTCDateTime binds datetimes as timezone-aware UTC."""
     decorator = UTCDateTime()
-    dialect = postgresql.dialect()
+    dialect = _postgresql_dialect()
 
     # None passthrough
     assert decorator.process_bind_param(None, dialect) is None
@@ -34,7 +49,7 @@ def test_utc_datetime_process_bind_param() -> None:
 def test_utc_datetime_process_result_value() -> None:
     """Verify UTCDateTime returns datetimes with UTC timezone attached."""
     decorator = UTCDateTime()
-    dialect = postgresql.dialect()
+    dialect = _postgresql_dialect()
 
     assert decorator.process_result_value(None, dialect) is None
 
@@ -53,11 +68,11 @@ def test_guid_load_dialect_impl() -> None:
     """Verify GUID adapts type descriptor based on dialect (PostgreSQL vs SQLite)."""
     guid = GUID()
 
-    pg_dialect = postgresql.dialect()
+    pg_dialect = _postgresql_dialect()
     pg_impl = guid.load_dialect_impl(pg_dialect)
     assert isinstance(pg_impl, postgresql.UUID)
 
-    sqlite_dialect = sqlite.dialect()
+    sqlite_dialect = _sqlite_dialect()
     sqlite_impl = guid.load_dialect_impl(sqlite_dialect)
     assert sqlite_impl.length == 36
 
@@ -68,12 +83,12 @@ def test_guid_process_bind_param() -> None:
     sample_uuid = uuid.uuid4()
     uuid_str = str(sample_uuid)
 
-    pg_dialect = postgresql.dialect()
+    pg_dialect = _postgresql_dialect()
     assert guid.process_bind_param(None, pg_dialect) is None
     assert guid.process_bind_param(sample_uuid, pg_dialect) == sample_uuid
     assert guid.process_bind_param(uuid_str, pg_dialect) == sample_uuid
 
-    sqlite_dialect = sqlite.dialect()
+    sqlite_dialect = _sqlite_dialect()
     assert guid.process_bind_param(None, sqlite_dialect) is None
     assert guid.process_bind_param(sample_uuid, sqlite_dialect) == uuid_str
     assert guid.process_bind_param(uuid_str, sqlite_dialect) == uuid_str
@@ -84,7 +99,7 @@ def test_guid_process_result_value() -> None:
     guid = GUID()
     sample_uuid = uuid.uuid4()
     uuid_str = str(sample_uuid)
-    dialect = postgresql.dialect()
+    dialect = _postgresql_dialect()
 
     assert guid.process_result_value(None, dialect) is None
     assert guid.process_result_value(sample_uuid, dialect) == sample_uuid

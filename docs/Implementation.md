@@ -668,7 +668,100 @@ All Definition of Done items hold across the codebase; no open high/critical sec
 | OQ-4 | Will most jobs have a runnable legacy instance, and who supplies its environment? | Phase 5 / 10 |
 | OQ-5 | Which model providers are allowed, and is any customer data barred from external APIs? | Phase 3 |
 | OQ-6 | Which Git hosts must receive the PR (GitHub, GitLab, Bitbucket, on-prem)? | Phase 12 |
-| OQ-7 | Single-tenant or multi-tenant from the start (affects schema, authz, isolation)? | Phase 1 |
+| OQ-7 | Single-tenant or multi-tenant from the start (affects schema, authz, isolation)? | Resolved in 01.4: organization multi-tenancy from the start |
 | OQ-8 | Which parts of the existing Postgres-based orchestrator (task leasing, schema-constrained CodeWriter) carry over under LangGraph? | Phase 6 |
-| OQ-9 | Authentication provider (OIDC vendor or built-in)? | Phase 4 |
+| OQ-9 | Which external identity-provider vendor and key-discovery/rotation process? | Deployment; 01.4 selected provider-neutral external RS256 JWTs |
 | OQ-10 | Notification channel for gate reminders (email, chat webhook, both)? | Phase 6 |
+
+---
+
+## 15. Sub-Phase 01.3 — Pydantic Contracts and Artifact Versioning
+
+Implemented on 2026-10-15 with **PASS WITH DOCUMENTED LIMITATIONS** status.
+
+Delivered:
+
+- Immutable Pydantic v2 contract conventions with forbidden unknown fields.
+- Typed job, artifact, status, gate-decision, pagination, and error transport models.
+- Version `1.0.0` contracts for all nine TDD artifacts.
+- Explicit uncertainty, bounded confidence, blockers, unresolved questions, and human-review reasons.
+- Repository-relative code references and content-addressed evidence/artifact references.
+- Artifact metadata separating schema version, append version, hash, producer execution, model,
+  prompt, lineage, storage reference, and creation time.
+- An explicit exact-version registry; unknown types and versions are rejected without dynamic imports.
+- Canonical compact JSON/UTF-8/SHA-256 hashing and integrity comparison.
+- Bounded untrusted-payload validation and value-free diagnostic summaries.
+- Validation-before-persistence through the Phase 01.2 artifact and audit repositories. Valid artifacts
+  and success audit events share the caller's transaction; invalid output creates no artifact and can
+  be committed as a sanitized rejection audit event.
+- PostgreSQL tests for valid persistence, rejection, lineage, hash retention, and rollback.
+- Contract documentation under `docs/contracts/`.
+
+No schema migration was added. The existing `artifact` table already holds the required normalized
+identity, business version, hash, storage reference, producer run, lineage, creation timestamp, and
+JSONB metadata. Two duplicate ORM index declarations were aligned with migration `0001`; migration
+history was not edited.
+
+Limitations:
+
+- Only schema version `1.0.0` is supported. No historical parser or transformation exists yet.
+- Object-store upload/existence checks, orchestration retry policy, and agent/model
+  execution remain later-phase responsibilities.
+- The repository's older Phase 01.2 integration tests still target obsolete model/repository names,
+  the global Rule 1 test still assumes a nonexistent `backend/src` directory, and full-test Mypy has
+  corresponding baseline errors. Sub-Phase 01.3 production modules pass strict Mypy and Ruff, and its
+  dedicated unit, contract, security, and live PostgreSQL integration tests pass.
+
+The final limitation above records the state at the 01.3 acceptance gate. It was resolved by the
+post-01.3 stabilization described below.
+
+---
+
+## 16. Post-01.3 Repository Stabilization
+
+Completed on 2026-10-15 with **PASS** status.
+
+- Migrated the retained Phase 01.2 PostgreSQL tests to current ORM and repository contracts without
+  removing behavioral coverage.
+- Corrected transaction fixtures to exercise the supported `AsyncEngine` boundary and retained
+  atomic commit and rollback assertions.
+- Made the Rule 1 scanner derive `backend/modernization_platform` from the test location and retained
+  its deliberate-violation self-test.
+- Restored strict project-wide Mypy to zero errors without lowering strictness or adding ignores.
+- Standardized package, coverage, CI, Alembic, Docker, and developer documentation paths on the
+  authoritative non-`src` backend layout.
+- Added forward-only revisions `0002_positive_constraints` and `0003_native_uuid_columns` after
+  clean migration testing exposed missing documented checks and a historical string/UUID mismatch.
+- Added PostgreSQL 16 to CI and made database unavailability fail CI instead of being reported as a
+  local environment skip.
+- Verified 149 tests with 85.58% total coverage, 17 live PostgreSQL tests, clean migration
+  upgrade/downgrade/upgrade, strict Mypy, Ruff lint, Ruff formatting, lockfile consistency, and wheel
+  packaging.
+
+---
+
+## 17. Sub-Phase 01.4 — Authentication, RBAC, and Isolation
+
+Implemented on 2026-10-15. Detailed architecture, access matrix, and limitations are documented in
+[`docs/security/authentication-rbac-isolation.md`](security/authentication-rbac-isolation.md).
+
+Delivered:
+
+- Provider-neutral RS256 JWT access-token validation with fixed algorithm, issuer/audience,
+  temporal and token-type checks, required identity claims, maximum token lifetime, and generic
+  external authentication errors.
+- Stable external identity mapping, database-derived roles, active membership checks, session
+  allowlisting and revocation, and tenant-scoped job membership.
+- Exactly four roles (`owner`, `reviewer`, `approver`, `admin`) and a centralized permission
+  catalog with deny-by-default checks.
+- Scoped job, artifact, and gate reads; service-layer gate and artifact authorization; worker
+  membership/job revalidation; principal-derived gate and artifact audit actors.
+- New reversible forward migration `0004_authentication_rbac_isolation`, preserving unassigned
+  legacy jobs while scoped queries deny them until a controlled ownership backfill.
+- Request body limits and credential redaction updates. No login, user administration, Git,
+  object-storage provider, or frontend workflow was added.
+
+The tenant model is organization multi-tenancy. The identity-provider vendor, production identity
+provisioning, worker queue trust, and legacy-job backfill remain deployment decisions. Authentication
+rate limiting is deferred because no credential-issuing endpoint exists; distributed limits for
+high-volume artifact and gate operations must be set before those workloads are exposed.

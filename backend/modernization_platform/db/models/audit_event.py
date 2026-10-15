@@ -39,6 +39,13 @@ class AuditEvent(Base):
         index=True,
         comment="Identity of actor: agent name (e.g. CodeWriter) or human user",
     )
+    actor_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        GUID,
+        ForeignKey("user_account.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+        comment="Stable authenticated actor when the event was caused by a human",
+    )
     action: Mapped[str] = mapped_column(
         String(100),
         nullable=False,

@@ -19,14 +19,14 @@ WORKDIR /build
 COPY --from=ghcr.io/astral-sh/uv:0.5.21 /uv /uvx /bin/
 
 # Copy packaging specifications
-COPY pyproject.toml uv.lock ./
+COPY pyproject.toml uv.lock README.md ./
 
 # Install production dependencies into a standalone virtual environment
 RUN uv sync --frozen --no-dev --no-install-project
 
-# Copy source tree and install project package
-COPY src ./src
-RUN uv sync --frozen --no-dev
+# Copy the package and install a relocatable, non-editable project wheel.
+COPY modernization_platform ./modernization_platform
+RUN uv sync --frozen --no-dev --no-editable
 
 # ==============================================================================
 # Production Runtime Stage
@@ -47,9 +47,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     HOST=0.0.0.0 \
     PORT=8000
 
-# Copy compiled virtual environment and project code from builder stage
+# Copy the compiled environment containing the installed project package.
 COPY --from=builder --chown=appuser:appgroup /build/.venv /app/.venv
-COPY --from=builder --chown=appuser:appgroup /build/src /app/src
 
 # Drop all privileges and run as non-root
 USER 10001:10001

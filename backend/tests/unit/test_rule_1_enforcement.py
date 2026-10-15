@@ -96,21 +96,20 @@ def validate_function_ast(node: ast.FunctionDef | ast.AsyncFunctionDef, filename
 
 
 def test_codebase_complies_with_rule_1() -> None:
-    """Scan all Python source files in src/modernization_platform and verify Rule 1 compliance."""
-    src_dir = Path(__file__).resolve().parents[2] / "src" / "modernization_platform"
-    assert src_dir.exists(), f"Source directory {src_dir} not found"
+    """Scan all production package modules and verify Rule 1 compliance."""
+    backend_dir = Path(__file__).resolve().parents[2]
+    package_dir = backend_dir / "modernization_platform"
+    assert package_dir.is_dir(), f"Production package directory {package_dir} not found"
 
     all_errors = []
-    for py_file in src_dir.rglob("*.py"):
+    for py_file in package_dir.rglob("*.py"):
         if py_file.name == "__init__.py":
             continue
 
         tree = ast.parse(py_file.read_text(encoding="utf-8"), filename=str(py_file))
         for node in ast.walk(tree):
             if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
-                errors = validate_function_ast(
-                    node, str(py_file.relative_to(src_dir.parent.parent))
-                )
+                errors = validate_function_ast(node, str(py_file.relative_to(backend_dir)))
                 all_errors.extend(errors)
 
     assert not all_errors, "Rule 1 violations detected in codebase:\n" + "\n".join(all_errors)

@@ -4,7 +4,7 @@ import logging
 from functools import lru_cache
 from typing import Annotated, Literal
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logger = logging.getLogger(__name__)
@@ -67,6 +67,36 @@ class Settings(BaseSettings):
     cors_allow_credentials: bool = Field(
         default=True,
         description="Allow credentials (cookies, authorization headers) with CORS",
+    )
+    max_request_body_bytes: Annotated[int, Field(ge=1_024, le=100_000_000)] = Field(
+        default=1_048_576,
+        description="Maximum accepted HTTP request body size in bytes",
+    )
+
+    # Authentication (externally issued JWT access tokens)
+    auth_jwt_issuer: str | None = Field(
+        default=None,
+        description="Exact trusted JWT issuer",
+    )
+    auth_jwt_audience: str | None = Field(
+        default=None,
+        description="Exact API audience required in access tokens",
+    )
+    auth_jwt_public_key: SecretStr | None = Field(
+        default=None,
+        description="PEM public key used exclusively for RS256 signature verification",
+    )
+    auth_jwt_algorithm: Literal["RS256"] = Field(
+        default="RS256",
+        description="Fixed JWT signature algorithm; algorithm fallback is prohibited",
+    )
+    auth_clock_skew_seconds: Annotated[int, Field(ge=0, le=60)] = Field(
+        default=30,
+        description="Maximum JWT clock skew allowed for exp/nbf/iat validation",
+    )
+    auth_max_token_lifetime_seconds: Annotated[int, Field(ge=60, le=86_400)] = Field(
+        default=3_600,
+        description="Maximum permitted access-token lifetime",
     )
 
     # API Documentation
@@ -221,6 +251,18 @@ class Settings(BaseSettings):
                 if self.db_ssl_mode == "disable":
                     raise ValueError(
                         f"Disabling database TLS/SSL (db_ssl_mode='disable') is prohibited in '{self.environment}' environment."
+                    )
+
+                if not (
+                    self.auth_jwt_issuer
+                    and self.auth_jwt_issuer.strip()
+                    and self.auth_jwt_audience
+                    and self.auth_jwt_audience.strip()
+                    and self.auth_jwt_public_key is not None
+                    and self.auth_jwt_public_key.get_secret_value().strip()
+                ):
+                    raise ValueError(
+                        "JWT issuer, audience, and verification key are required in staging and production."
                     )
 
             return self

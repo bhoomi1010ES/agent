@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.responses import Response
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from modernization_platform.core.exceptions import ApplicationException
 from modernization_platform.core.ids import (
@@ -74,6 +75,85 @@ class CorrelationIdMiddleware(BaseHTTPMiddleware):
                 code="INTERNAL_SERVER_ERROR",
                 message="An unexpected server error occurred. Please contact support with the request ID.",
             )
+
+
+class RequestBodyLimitMiddleware:
+    """Reject oversized request bodies before endpoint parsing or persistence."""
+
+    def __init__(self, app: ASGIApp, max_body_bytes: int) -> None:
+        self.app = app
+        self.max_body_bytes = max_body_bytes
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        try:
+            content_lengths = [
+                value for key, value in scope["headers"] if key.lower() == b"content-length"
+            ]
+            if content_lengths:
+                try:
+                    content_length = int(content_lengths[-1].decode("ascii"))
+                    if content_length < 0:
+                        raise ValueError("negative content length")
+                    if content_length > self.max_body_bytes:
+                        await create_error_response(
+                            status_code=413,
+                            code="REQUEST_TOO_LARGE",
+                            message="Request body exceeds the configured limit.",
+                        )(scope, receive, send)
+                        return
+                except (ValueError, UnicodeDecodeError):
+                    await create_error_response(
+                        status_code=400,
+                        code="BAD_REQUEST",
+                        message="Invalid Content-Length header.",
+                    )(scope, receive, send)
+                    return
+
+            messages: list[Message] = []
+            body_bytes = 0
+            while True:
+                message = await receive()
+                messages.append(message)
+                if message["type"] == "http.request":
+                    body_bytes += len(message.get("body", b""))
+                    if body_bytes > self.max_body_bytes:
+                        await create_error_response(
+                            status_code=413,
+                            code="REQUEST_TOO_LARGE",
+                            message="Request body exceeds the configured limit.",
+                        )(scope, receive, send)
+                        return
+                    if not message.get("more_body", False):
+                        break
+                elif message["type"] == "http.disconnect":
+                    break
+
+            message_index = 0
+
+            async def replay_receive() -> Message:
+                nonlocal message_index
+                try:
+                    if message_index < len(messages):
+                        message = messages[message_index]
+                        message_index += 1
+                        return message
+                    return await receive()
+                except Exception as exc:
+                    logger.exception("Request body replay failed | %s", type(exc).__name__)
+                    raise
+
+            await self.app(scope, replay_receive, send)
+        except Exception as exc:
+            logger.exception("Request body limit enforcement failed | %s", type(exc).__name__)
+            await create_error_response(
+                status_code=500,
+                code="INTERNAL_SERVER_ERROR",
+                message="An unexpected server error occurred.",
+            )(scope, receive, send)
 
 
 def create_error_response(
@@ -197,6 +277,7 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException) 
             status.HTTP_404_NOT_FOUND: "NOT_FOUND",
             status.HTTP_405_METHOD_NOT_ALLOWED: "METHOD_NOT_ALLOWED",
             status.HTTP_409_CONFLICT: "CONFLICT",
+            status.HTTP_413_CONTENT_TOO_LARGE: "REQUEST_TOO_LARGE",
             status.HTTP_503_SERVICE_UNAVAILABLE: "SERVICE_UNAVAILABLE",
         }
         code = code_map.get(exc.status_code, f"HTTP_{exc.status_code}")

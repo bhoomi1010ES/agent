@@ -2,6 +2,7 @@
 
 import logging
 import uuid
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import select
@@ -9,6 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from modernization_platform.db.models.gate import Gate
 from modernization_platform.db.models.gate_decision import GateDecision
+from modernization_platform.db.models.identity import JobMember
+from modernization_platform.db.models.job import Job
 from modernization_platform.repositories.base import BaseRepository
 
 logger = logging.getLogger(__name__)
@@ -46,16 +49,47 @@ class GateRepository(BaseRepository[Gate]):
         except Exception as exc:
             raise self._translate_error("create_gate", exc) from exc
 
-    async def get_by_id(self, gate_id: uuid.UUID) -> Gate | None:
-        """Retrieve a gate by its identifier."""
+    async def _get_by_id_unscoped(self, gate_id: uuid.UUID) -> Gate | None:
+        """Internal lookup for persistence workflows after authorization."""
         try:
             stmt = select(Gate).where(Gate.id == gate_id)
             result = await self.session.execute(stmt)
             return result.scalar_one_or_none()
         except Exception as exc:
-            raise self._translate_error("get_by_id", exc) from exc
+            raise self._translate_error("_get_by_id_unscoped", exc) from exc
 
-    async def list_gates_by_job(
+    async def get_by_id_scoped(
+        self,
+        *,
+        gate_id: uuid.UUID,
+        tenant_id: uuid.UUID,
+        user_id: uuid.UUID,
+        membership_id: uuid.UUID,
+        tenant_admin: bool = False,
+    ) -> Gate | None:
+        """Retrieve a gate only through its authorized parent job scope."""
+        try:
+            statement = (
+                select(Gate)
+                .join(Job, Job.id == Gate.job_id)
+                .where(Gate.id == gate_id, Job.tenant_id == tenant_id)
+            )
+            if not tenant_admin:
+                member_access = (
+                    select(JobMember.id)
+                    .where(
+                        JobMember.job_id == Job.id,
+                        JobMember.membership_id == membership_id,
+                    )
+                    .exists()
+                )
+                statement = statement.where((Job.owner_user_id == user_id) | member_access)
+            result = await self.session.execute(statement)
+            return result.scalar_one_or_none()
+        except Exception as exc:
+            raise self._translate_error("get_by_id_scoped", exc) from exc
+
+    async def _list_gates_by_job_unscoped(
         self,
         job_id: uuid.UUID,
         state: str | None = None,
@@ -70,25 +104,22 @@ class GateRepository(BaseRepository[Gate]):
         except Exception as exc:
             raise self._translate_error("list_gates_by_job", exc) from exc
 
-    async def record_decision(
+    async def record_authorized_decision(
         self,
-        gate_id: uuid.UUID,
-        actor: str,
+        gate: Gate,
+        actor_user_id: uuid.UUID,
         decision: str,
         feedback: str | None = None,
         waivers: dict[str, Any] | None = None,
         decision_id: uuid.UUID | None = None,
     ) -> GateDecision:
-        """Record an immutable human decision and update gate status."""
+        """Record a decision for a gate already obtained by a scoped authorization query."""
         try:
-            gate = await self.get_by_id(gate_id)
-            if gate is None:
-                raise ValueError(f"Gate with ID {gate_id} not found")
-
             gate_dec = GateDecision(
                 id=decision_id or uuid.uuid4(),
-                gate_id=gate_id,
-                actor=actor,
+                gate_id=gate.id,
+                actor=str(actor_user_id),
+                actor_user_id=actor_user_id,
                 decision=decision,
                 feedback=feedback,
                 waivers=waivers,
@@ -101,7 +132,8 @@ class GateRepository(BaseRepository[Gate]):
                 if decision == "approved"
                 else ("waived" if decision == "waived" else "rejected")
             )
+            gate.resolved_at = datetime.now(UTC)
             await self.session.flush()
             return gate_dec
         except Exception as exc:
-            raise self._translate_error("record_decision", exc) from exc
+            raise self._translate_error("record_authorized_decision", exc) from exc

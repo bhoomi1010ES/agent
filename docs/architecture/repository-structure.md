@@ -20,8 +20,7 @@ The repository follows a clean, modular monorepo structure designed to:
 legacy-code-modernization-platform/
 │
 ├── backend/                           # Complete Python backend application
-│   ├── src/
-│   │   └── modernization_platform/    # Application package root
+│   ├── modernization_platform/        # Application package root
 │   │       ├── __init__.py
 │   │       ├── main.py                # ASGI entrypoint
 │   │       ├── app.py                 # FastAPI application factory & lifespan
@@ -100,7 +99,7 @@ legacy-code-modernization-platform/
 
 ---
 
-## 3. Package Responsibilities in `backend/src/modernization_platform/`
+## 3. Package Responsibilities in `backend/modernization_platform/`
 
 - **`config/`**: Contains only declarative settings schemas (`settings.py`) using Pydantic Settings. Reads from environment variables, enforces fail-fast validation in staging/production, and rejects invalid configurations.
 - **`core/`**: Houses shared infrastructure primitives:
@@ -119,10 +118,10 @@ legacy-code-modernization-platform/
 When introducing new functionality in future phases:
 
 1. **Classify Responsibility**:
-   - HTTP endpoint? Add to `backend/src/modernization_platform/api/v1/endpoints/` and register in `api/v1/router.py`.
-   - Domain logic or coordinator? Add to `backend/src/modernization_platform/services/`.
-   - Database model or repository? Add model to `backend/src/modernization_platform/domain/` or `db/` and repository to `repositories/`.
-   - Pydantic contract artifact? Add to `backend/src/modernization_platform/schemas/`.
+   - HTTP endpoint? Add to `backend/modernization_platform/api/v1/endpoints/` and register in `api/v1/router.py`.
+   - Domain logic or coordinator? Add to `backend/modernization_platform/services/`.
+   - Database model or repository? Add model to `backend/modernization_platform/domain/` or `db/` and repository to `repositories/`.
+   - Pydantic contract artifact? Add to `backend/modernization_platform/schemas/`.
 2. **Follow Rule 1 (production-engineering-rules.md)**:
    - Every function must wrap its body in `try/except` (or use the `@log_errors` decorator).
    - Log function name, correlation ID, exception type, and full traceback via `logger.exception`.
@@ -134,5 +133,5 @@ When introducing new functionality in future phases:
 4. **Run Verification**:
    - `uv run ruff check .`
    - `uv run ruff format --check .`
-   - `uv run mypy src tests`
-   - `uv run pytest --cov=src/modernization_platform --cov-report=term-missing`
+   - `uv run mypy modernization_platform tests`
+   - `uv run pytest --cov=modernization_platform --cov-report=term-missing`

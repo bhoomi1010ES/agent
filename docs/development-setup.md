@@ -44,7 +44,7 @@ python -m uv sync --frozen
 
 ## 3. Configuration Reference
 
-Configuration is managed via Pydantic Settings in `backend/src/modernization_platform/config/settings.py` and loaded from environment variables:
+Configuration is managed via Pydantic Settings in `backend/modernization_platform/config/settings.py` and loaded from environment variables:
 
 | Variable | Type | Default | Description |
 |---|---|---|---|
@@ -124,7 +124,7 @@ cd backend
 
 ### 6.1 Run Automated Tests with Coverage
 ```bash
-uv run pytest --cov=src/modernization_platform --cov-report=term-missing
+uv run pytest --cov=modernization_platform --cov-report=term-missing
 ```
 *(Minimum baseline coverage threshold: **85%**).*
 
@@ -145,7 +145,7 @@ uv run ruff check --fix .
 
 ### 6.3 Static Type Checking (mypy strict)
 ```bash
-uv run mypy src tests
+uv run mypy modernization_platform tests
 ```
 
 ### 6.4 Rule 1 AST Compliance Test

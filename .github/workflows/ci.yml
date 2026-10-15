@@ -21,6 +21,25 @@ jobs:
       run:
         working-directory: backend
 
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: modernization_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d modernization_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DEBUG: "false"
+      DATABASE_TEST_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/modernization_test
+
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -49,11 +68,14 @@ jobs:
         run: uv run ruff check .
 
       - name: Static type checking (mypy strict)
-        run: uv run mypy src tests
+        run: uv run mypy modernization_platform tests
 
       - name: Run automated test suite with coverage
         run: |
-          uv run pytest --cov=src/modernization_platform --cov-report=term-missing --cov-report=xml
+          uv run pytest --cov=modernization_platform --cov-report=term-missing --cov-report=xml
+
+      - name: Run PostgreSQL integration suite explicitly
+        run: uv run pytest tests/integration/db -v
 
       - name: Verify Rule 1 AST enforcement
         run: uv run pytest tests/unit/test_rule_1_enforcement.py -v

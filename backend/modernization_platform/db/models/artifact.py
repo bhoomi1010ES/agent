@@ -3,7 +3,7 @@
 import uuid
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import CheckConstraint, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -48,7 +48,6 @@ class Artifact(Base, ImmutableTimestampMixin):
     content_hash: Mapped[str] = mapped_column(
         String(64),
         nullable=False,
-        index=True,
         comment="SHA-256 hash of the artifact payload",
     )
     storage_ref: Mapped[str] = mapped_column(
@@ -84,6 +83,7 @@ class Artifact(Base, ImmutableTimestampMixin):
     )
 
     __table_args__ = (
+        CheckConstraint("version > 0", name="version_positive"),
         UniqueConstraint(
             "job_id",
             "type",

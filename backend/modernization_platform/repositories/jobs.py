@@ -8,6 +8,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from modernization_platform.db.models.identity import JobMember
 from modernization_platform.db.models.job import Job
 from modernization_platform.repositories.base import BaseRepository
 
@@ -26,6 +27,8 @@ class JobRepository(BaseRepository[Job]):
         source_ref: str,
         target_stack_spec: dict[str, Any] | None = None,
         budget: dict[str, Any] | None = None,
+        tenant_id: uuid.UUID | None = None,
+        owner_user_id: uuid.UUID | None = None,
         job_id: uuid.UUID | None = None,
     ) -> Job:
         """Create and persist a new modernization job record."""
@@ -36,6 +39,8 @@ class JobRepository(BaseRepository[Job]):
                 source_ref=source_ref,
                 target_stack_spec=target_stack_spec or {},
                 budget=budget or {},
+                tenant_id=tenant_id,
+                owner_user_id=owner_user_id,
                 status="pending",
             )
             self.session.add(job)
@@ -44,16 +49,43 @@ class JobRepository(BaseRepository[Job]):
         except Exception as exc:
             raise self._translate_error("create_job", exc) from exc
 
-    async def get_by_id(self, job_id: uuid.UUID) -> Job | None:
-        """Retrieve a job by its unique identifier."""
+    async def _get_by_id_unscoped(self, job_id: uuid.UUID) -> Job | None:
+        """Internal lookup for repository mutations after authorization."""
         try:
             stmt = select(Job).where(Job.id == job_id)
             result = await self.session.execute(stmt)
             return result.scalar_one_or_none()
         except Exception as exc:
-            raise self._translate_error("get_by_id", exc) from exc
+            raise self._translate_error("_get_by_id_unscoped", exc) from exc
 
-    async def list_jobs(
+    async def get_by_id_scoped(
+        self,
+        *,
+        job_id: uuid.UUID,
+        tenant_id: uuid.UUID,
+        user_id: uuid.UUID,
+        membership_id: uuid.UUID,
+        tenant_admin: bool = False,
+    ) -> Job | None:
+        """Retrieve a job only within explicit tenant and job-membership scope."""
+        try:
+            statement = select(Job).where(Job.id == job_id, Job.tenant_id == tenant_id)
+            if not tenant_admin:
+                member_access = (
+                    select(JobMember.id)
+                    .where(
+                        JobMember.job_id == Job.id,
+                        JobMember.membership_id == membership_id,
+                    )
+                    .exists()
+                )
+                statement = statement.where((Job.owner_user_id == user_id) | member_access)
+            result = await self.session.execute(statement)
+            return result.scalar_one_or_none()
+        except Exception as exc:
+            raise self._translate_error("get_by_id_scoped", exc) from exc
+
+    async def _list_jobs_unscoped(
         self,
         limit: int = 50,
         offset: int = 0,
@@ -85,7 +117,7 @@ class JobRepository(BaseRepository[Job]):
     ) -> Job | None:
         """Update job lifecycle status and record finished_at if terminal."""
         try:
-            job = await self.get_by_id(job_id)
+            job = await self._get_by_id_unscoped(job_id)
             if job is None:
                 return None
             job.status = status

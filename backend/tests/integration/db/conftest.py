@@ -42,6 +42,19 @@ def _is_port_listening(db_url: str) -> bool:
 _PORT_AVAILABLE = _is_port_listening(TEST_DB_URL)
 
 
+def _skip_or_fail_database(message: str) -> None:
+    """Fail in CI, while keeping unavailable local PostgreSQL an explicit skip."""
+    if os.getenv("CI"):
+        pytest.fail(message)
+    pytest.skip(message)
+
+
+def _is_dedicated_test_database(database_url: str) -> bool:
+    """Reject destructive fixture cleanup against a non-test database name."""
+    database_name = urlparse(database_url).path.lstrip("/").lower()
+    return bool(database_name) and "test" in database_name
+
+
 @pytest.fixture
 def anyio_backend() -> str:
     return "asyncio"
@@ -50,8 +63,10 @@ def anyio_backend() -> str:
 @pytest.fixture
 async def db_engine() -> AsyncIterator[AsyncEngine]:
     """Provide an AsyncEngine bound to the PostgreSQL test database, or skip gracefully."""
+    if not _is_dedicated_test_database(TEST_DB_URL):
+        pytest.fail("DATABASE_TEST_URL must identify a dedicated database containing 'test'")
     if not _PORT_AVAILABLE:
-        pytest.skip(
+        _skip_or_fail_database(
             f"PostgreSQL server is not reachable at {TEST_DB_URL}. "
             "Configure DATABASE_TEST_URL in .env to run integration tests against your local pgAdmin database."
         )
@@ -69,7 +84,7 @@ async def db_engine() -> AsyncIterator[AsyncEngine]:
             await conn.execute(text("SELECT 1"))
     except Exception as exc:
         await engine.dispose()
-        pytest.skip(
+        _skip_or_fail_database(
             f"PostgreSQL test database not accessible ({exc}). "
             "Ensure the database exists in pgAdmin and valid credentials are set in DATABASE_TEST_URL."
         )
@@ -95,26 +110,28 @@ async def db_session(db_engine: AsyncEngine) -> AsyncIterator[AsyncSession]:
     async with session_factory() as session:
         yield session
 
-    # Truncate all tables after each test to ensure test isolation
-    try:
-        async with db_engine.begin() as conn:
-            await conn.execute(
-                text(
-                    """
-                    TRUNCATE TABLE
-                        audit_event,
-                        gate_decision,
-                        gate,
-                        test_result,
-                        test_case,
-                        agent_run,
-                        module_attempt,
-                        module,
-                        artifact,
-                        job
-                    CASCADE;
-                    """
-                )
+    # Truncate all tables after each test to ensure test isolation.
+    async with db_engine.begin() as conn:
+        await conn.execute(
+            text(
+                """
+                TRUNCATE TABLE
+                    audit_event,
+                    auth_session,
+                    gate_decision,
+                    gate,
+                    test_result,
+                    test_case,
+                    agent_run,
+                    module_attempt,
+                    module,
+                    job_member,
+                    artifact,
+                    job,
+                    tenant_membership,
+                    user_account,
+                    tenant
+                CASCADE;
+                """
             )
-    except Exception:
-        pass
+        )

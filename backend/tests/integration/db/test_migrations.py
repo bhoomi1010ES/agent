@@ -1,13 +1,17 @@
-"""Integration tests verifying Alembic schema migrations against a live PostgreSQL database."""
+"""Integration tests verifying Alembic migrations against dedicated PostgreSQL."""
 
 import os
 from pathlib import Path
+from urllib.parse import urlparse
 
 import pytest
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import inspect
-from sqlalchemy.ext.asyncio import AsyncEngine
+from sqlalchemy import UUID, create_engine, inspect, text
+from sqlalchemy.engine import Connection, Engine
+
+import modernization_platform.db.models  # noqa: F401
+from modernization_platform.db.base import Base
 
 TEST_DB_URL = os.getenv(
     "DATABASE_TEST_URL",
@@ -15,35 +19,44 @@ TEST_DB_URL = os.getenv(
 )
 
 
+def _sync_database_url(database_url: str) -> str:
+    """Convert the test URL to the installed synchronous psycopg driver."""
+    return database_url.replace("postgresql+asyncpg://", "postgresql+psycopg://")
+
+
+def _inspect_tables(connection: Connection) -> list[str]:
+    """Return table names visible to the migration connection."""
+    return list(inspect(connection).get_table_names())
+
+
+def _reset_test_schema(engine: Engine) -> None:
+    """Clear only the dedicated test schema before exercising the full lifecycle."""
+    Base.metadata.drop_all(engine)
+    with engine.begin() as connection:
+        connection.execute(text("DROP TABLE IF EXISTS alembic_version"))
+
+
+def _assert_dedicated_test_database(database_url: str) -> None:
+    """Prevent lifecycle testing against a development or production database."""
+    database_name = urlparse(database_url).path.lstrip("/").lower()
+    if not database_name or "test" not in database_name:
+        raise RuntimeError("DATABASE_TEST_URL must identify a dedicated database containing 'test'")
+
+
 @pytest.fixture
 def alembic_config() -> Config:
-    """Construct an Alembic Config pointing to the project's alembic.ini and test database."""
-    ini_path = Path(__file__).resolve().parents[3] / "alembic.ini"
-    config = Config(str(ini_path))
-    config.set_main_option(
-        "script_location", str(Path(__file__).resolve().parents[3] / "migrations")
-    )
-    config.set_section_option("alembic", "db_url", TEST_DB_URL)
+    """Construct an Alembic config targeting the dedicated test database."""
+    backend_dir = Path(__file__).resolve().parents[3]
+    config = Config(str(backend_dir / "alembic.ini"))
+    config.set_main_option("script_location", str(backend_dir / "migrations"))
+    config.set_main_option("sqlalchemy.url", TEST_DB_URL)
     return config
 
 
-@pytest.mark.asyncio
-async def test_migration_lifecycle(db_engine: AsyncEngine, alembic_config: Config) -> None:
-    """Verify that migrations upgrade to head, verify all 10 tables, and downgrade cleanly."""
-    # 1. Downgrade to base first
-    command.downgrade(alembic_config, "base")
-
-    # 2. Upgrade to head
-    command.upgrade(alembic_config, "head")
-
-    # 3. Inspect PostgreSQL tables
-    def _inspect_tables(connection) -> list[str]:
-        inspector = inspect(connection)
-        return inspector.get_table_names()
-
-    async with db_engine.connect() as conn:
-        table_names = await conn.run_sync(_inspect_tables)
-
+def test_migration_lifecycle(alembic_config: Config) -> None:
+    """Verify clean upgrade, downgrade, and restoration of the PostgreSQL schema."""
+    _assert_dedicated_test_database(TEST_DB_URL)
+    engine = create_engine(_sync_database_url(TEST_DB_URL))
     expected_tables = {
         "job",
         "artifact",
@@ -55,19 +68,43 @@ async def test_migration_lifecycle(db_engine: AsyncEngine, alembic_config: Confi
         "gate",
         "gate_decision",
         "audit_event",
+        "auth_session",
+        "job_member",
+        "tenant",
+        "tenant_membership",
+        "user_account",
         "alembic_version",
     }
-    for expected in expected_tables:
-        assert expected in table_names, f"Table '{expected}' missing from PostgreSQL schema"
 
-    # 4. Verify downgrading to base removes all application tables
-    command.downgrade(alembic_config, "base")
+    try:
+        _reset_test_schema(engine)
+        command.upgrade(alembic_config, "head")
 
-    async with db_engine.connect() as conn:
-        table_names_after_downgrade = await conn.run_sync(_inspect_tables)
+        with engine.connect() as connection:
+            table_names = _inspect_tables(connection)
+            inspector = inspect(connection)
+            artifact_constraints = {
+                item["name"] for item in inspector.get_check_constraints("artifact")
+            }
+            attempt_constraints = {
+                item["name"] for item in inspector.get_check_constraints("module_attempt")
+            }
+            membership_constraints = {
+                item["name"] for item in inspector.get_check_constraints("tenant_membership")
+            }
+            job_columns = {item["name"]: item["type"] for item in inspector.get_columns("job")}
 
-    for app_table in expected_tables - {"alembic_version"}:
-        assert app_table not in table_names_after_downgrade, f"Table '{app_table}' not dropped"
+        assert expected_tables.issubset(table_names)
+        assert "ck_artifact_version_positive" in artifact_constraints
+        assert "ck_module_attempt_number_positive" in attempt_constraints
+        assert "ck_tenant_membership_role_allowed" in membership_constraints
+        assert isinstance(job_columns["id"], UUID)
+        assert isinstance(job_columns["tenant_id"], UUID)
 
-    # 5. Restore schema to head for subsequent tests
-    command.upgrade(alembic_config, "head")
+        command.downgrade(alembic_config, "base")
+        with engine.connect() as connection:
+            table_names_after_downgrade = _inspect_tables(connection)
+        assert not (expected_tables - {"alembic_version"}) & set(table_names_after_downgrade)
+    finally:
+        command.upgrade(alembic_config, "head")
+        engine.dispose()

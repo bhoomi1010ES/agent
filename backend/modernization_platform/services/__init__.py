@@ -1,3 +1,9 @@
-"""Domain and orchestration services extension boundary (Phase 06+)."""
+"""Service layer public exports."""
 
-__all__: list[str] = []
+from modernization_platform.services.artifacts import (
+    ArtifactPersistenceResult,
+    ArtifactPersistenceService,
+)
+from modernization_platform.services.authorization import AuthorizationService
+
+__all__ = ["ArtifactPersistenceResult", "ArtifactPersistenceService", "AuthorizationService"]

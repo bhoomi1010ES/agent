@@ -46,18 +46,32 @@ async def test_job_repository_unit(mock_session: AsyncMock) -> None:
     mock_res = MagicMock()
     mock_res.scalar_one_or_none.return_value = job
     mock_session.execute.return_value = mock_res
-    found = await repo.get_by_id(job.id)
+    found = await repo.get_by_id_scoped(
+        job_id=job.id,
+        tenant_id=uuid.uuid4(),
+        user_id=uuid.uuid4(),
+        membership_id=uuid.uuid4(),
+    )
     assert found is job
 
     # get_by_id not found returns None
     mock_res_empty = MagicMock()
     mock_res_empty.scalar_one_or_none.return_value = None
     mock_session.execute.return_value = mock_res_empty
-    assert await repo.get_by_id(uuid.uuid4()) is None
+    assert (
+        await repo.get_by_id_scoped(
+            job_id=uuid.uuid4(),
+            tenant_id=uuid.uuid4(),
+            user_id=uuid.uuid4(),
+            membership_id=uuid.uuid4(),
+        )
+        is None
+    )
 
     # update_status
     mock_session.execute.return_value = mock_res
     updated = await repo.update_status(job.id, "running")
+    assert updated is not None
     assert updated.status == "running"
 
     # list_jobs
@@ -67,7 +81,7 @@ async def test_job_repository_unit(mock_session: AsyncMock) -> None:
     mock_result_count.scalar_one.return_value = 1
     mock_session.execute.side_effect = [mock_result_items, mock_result_count]
 
-    items = await repo.list_jobs(offset=0, limit=10, status="running")
+    items = await repo._list_jobs_unscoped(offset=0, limit=10, status="running")
     assert items == [job]
 
 
@@ -77,7 +91,7 @@ async def test_artifact_repository_unit(mock_session: AsyncMock) -> None:
     job_id = uuid.uuid4()
 
     # append_artifact
-    artifact = await repo.append_artifact(
+    artifact = await repo._append_artifact_after_authorization(
         job_id=job_id,
         artifact_type="IR_AST",
         content_hash="sha256:123456",
@@ -92,21 +106,26 @@ async def test_artifact_repository_unit(mock_session: AsyncMock) -> None:
     mock_res = MagicMock()
     mock_res.scalar_one_or_none.return_value = artifact
     mock_session.execute.return_value = mock_res
-    found = await repo.get_by_id(artifact.id)
+    found = await repo.get_by_id_scoped(
+        artifact_id=artifact.id,
+        tenant_id=uuid.uuid4(),
+        user_id=uuid.uuid4(),
+        membership_id=uuid.uuid4(),
+    )
     assert found is artifact
 
     # list_artifacts_by_job
     mock_res_list = MagicMock()
     mock_res_list.scalars.return_value.all.return_value = [artifact]
     mock_session.execute.return_value = mock_res_list
-    results = await repo.list_artifacts_by_job(job_id)
+    results = await repo._list_artifacts_by_job_unscoped(job_id)
     assert results == [artifact]
 
     # get_by_job_and_type_version
     mock_res_version = MagicMock()
     mock_res_version.scalar_one_or_none.return_value = artifact
     mock_session.execute.return_value = mock_res_version
-    ver_art = await repo.get_by_job_and_type_version(job_id, "IR_AST", 1)
+    ver_art = await repo._get_by_job_and_type_version_unscoped(job_id, "IR_AST", 1)
     assert ver_art is artifact
 
 
@@ -239,17 +258,16 @@ async def test_gate_repository_unit(mock_session: AsyncMock) -> None:
     gate = await repo.create_gate(job_id=job_id, gate_type="G1_DISCOVERY_PLAN")
     assert gate.gate_type == "G1_DISCOVERY_PLAN"
 
-    # record_decision
-    mock_res = MagicMock()
-    mock_res.scalar_one_or_none.return_value = gate
-    mock_session.execute.return_value = mock_res
-    decision = await repo.record_decision(
-        gate_id=gate.id,
-        actor="admin@enterprise.org",
+    # record_authorized_decision accepts only a gate returned by a scoped query
+    actor_user_id = uuid.uuid4()
+    decision = await repo.record_authorized_decision(
+        gate=gate,
+        actor_user_id=actor_user_id,
         decision="approved",
         feedback="Decomposition verified.",
     )
     assert decision.decision == "approved"
+    assert decision.actor == str(actor_user_id)
     assert gate.state == "approved"
 
 
@@ -298,7 +316,7 @@ async def test_artifact_auto_versioning(mock_session: AsyncMock) -> None:
     mock_res.scalar.return_value = 3
     mock_session.execute.return_value = mock_res
 
-    artifact = await repo.append_artifact(
+    artifact = await repo._append_artifact_after_authorization(
         job_id=job_id,
         artifact_type="CODE",
         content_hash="sha256:789",
@@ -350,7 +368,7 @@ async def test_list_gates_by_job(mock_session: AsyncMock) -> None:
     mock_res.scalars.return_value.all.return_value = [gate]
     mock_session.execute.return_value = mock_res
 
-    gates = await repo.list_gates_by_job(job_id, state="pending")
+    gates = await repo._list_gates_by_job_unscoped(job_id, state="pending")
     assert gates == [gate]
 
 

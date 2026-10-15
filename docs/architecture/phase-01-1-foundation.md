@@ -8,10 +8,10 @@ Phase 01.1 establishes the foundational engineering runtime, package structure, 
 
 ## 2. Package Responsibilities
 
-The codebase follows the standard `src/` layout under the top-level package `modernization_platform`:
+The backend package lives directly under `backend/modernization_platform`:
 
 ```text
-src/modernization_platform/
+backend/modernization_platform/
 ├── main.py              # Minimal ASGI entry point callable by Uvicorn / Gunicorn
 ├── app.py               # FastAPI application factory (create_app) and lifespan lifecycle manager
 ├── config/              # Centralized Pydantic Settings configuration and validation
