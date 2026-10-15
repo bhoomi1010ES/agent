@@ -1,0 +1,47 @@
+# Git and repository metadata
+.git
+.github
+.gitignore
+.dockerignore
+
+# Documentation
+docs/
+*.md
+
+# Virtual environments and caches
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Test and coverage artifacts
+tests/
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# Local configuration and secrets
+.env*
+!.env.example
+*.pem
+*.key
+*.cert
+
+# Local build artifacts
+dist/
+build/
+*.egg-info/
+
+# Local logs and temp data
+logs/
+*.log
+local_storage/
+tmp/
+scratch/
+compose.yaml

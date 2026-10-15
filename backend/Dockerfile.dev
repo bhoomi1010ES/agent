@@ -1,0 +1,26 @@
+# ==============================================================================
+# Development Dockerfile with Live Reload and Test Tooling
+# ==============================================================================
+FROM python:3.12-slim-bookworm
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    ENVIRONMENT=development \
+    DEBUG=true
+
+WORKDIR /workspace
+
+# Install uv package manager
+COPY --from=ghcr.io/astral-sh/uv:0.5.21 /uv /uvx /bin/
+
+# Copy dependency specifications
+COPY pyproject.toml uv.lock ./
+
+# Install all dependencies including development and test tooling
+RUN uv sync --frozen
+
+ENV PATH="/workspace/.venv/bin:$PATH"
+
+EXPOSE 8000
+
+CMD ["uvicorn", "modernization_platform.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]

@@ -1,0 +1,59 @@
+name: Platform Baseline CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  quality-gate:
+    name: Code Quality & Security Gate
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.12", "3.13"]
+
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up uv package manager
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+          enable-cache: true
+
+      - name: Set up Python ${{ matrix.python-version }}
+        run: uv python install ${{ matrix.python-version }}
+
+      - name: Verify lockfile consistency
+        run: uv lock --check
+
+      - name: Install locked dependencies
+        run: uv sync --frozen
+
+      - name: Formatting check (ruff)
+        run: uv run ruff format --check .
+
+      - name: Linting check (ruff)
+        run: uv run ruff check .
+
+      - name: Static type checking (mypy strict)
+        run: uv run mypy src tests
+
+      - name: Run automated test suite with coverage
+        run: |
+          uv run pytest --cov=src/modernization_platform --cov-report=term-missing --cov-report=xml
+
+      - name: Verify Rule 1 AST enforcement
+        run: uv run pytest tests/unit/test_rule_1_enforcement.py -v

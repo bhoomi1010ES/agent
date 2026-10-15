@@ -1,0 +1,49 @@
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.dev
+    container_name: modernization-platform-backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend/src:/workspace/src:ro
+      - ./backend/tests:/workspace/tests:ro
+    env_file:
+      - ./backend/.env.example
+    environment:
+      - ENVIRONMENT=development
+      - DEBUG=true
+      - HOST=0.0.0.0
+      - PORT=8000
+      - DATABASE_URL=postgresql+asyncpg://modernizer:modernizer_dev_pwd@postgres:5432/modernization_dev
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/live', timeout=2)\""]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: modernization-platform-postgres
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_USER: modernizer
+      POSTGRES_PASSWORD: modernizer_dev_pwd
+      POSTGRES_DB: modernization_dev
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U modernizer -d modernization_dev"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+volumes:
+  postgres_data:
