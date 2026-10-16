@@ -116,6 +116,7 @@ async def db_session(db_engine: AsyncEngine) -> AsyncIterator[AsyncSession]:
             text(
                 """
                 TRUNCATE TABLE
+                    idempotency_record,
                     audit_event,
                     auth_session,
                     gate_decision,
@@ -123,6 +124,10 @@ async def db_session(db_engine: AsyncEngine) -> AsyncIterator[AsyncSession]:
                     test_result,
                     test_case,
                     agent_run,
+                    model_execution,
+                    budget_reservation,
+                    budget_account,
+                    task,
                     module_attempt,
                     module,
                     job_member,

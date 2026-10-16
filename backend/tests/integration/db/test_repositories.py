@@ -28,7 +28,7 @@ async def test_job_repository_crud(db_session: AsyncSession) -> None:
     )
     await db_session.commit()
     assert job.id is not None
-    assert job.status == "pending"
+    assert job.status in ("pending", "queued")
 
     # 2. Get by ID
     retrieved = await db_session.get(type(job), job.id)

@@ -1,3 +1,11 @@
-"""Background task worker pool extension boundary (Phase 06)."""
+"""Background worker pool and crash recovery for LangGraph workflows."""
 
-__all__: list[str] = []
+from modernization_platform.workers.base import BaseWorker
+from modernization_platform.workers.lease_manager import LeaseManager
+from modernization_platform.workers.workflow_worker import WorkflowWorker
+
+__all__ = [
+    "BaseWorker",
+    "LeaseManager",
+    "WorkflowWorker",
+]

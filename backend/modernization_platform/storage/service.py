@@ -123,6 +123,136 @@ class ArtifactStorageService:
             raise
 
     @log_errors
+    async def stream_store_artifact(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        job_id: uuid.UUID,
+        artifact_type: str,
+        content_stream: Any,
+        content_type: str = "application/octet-stream",
+        schema_version: str = "1.0.0",
+        version: int | None = None,
+        artifact_id: uuid.UUID | None = None,
+        expected_hash: str | None = None,
+        expected_size: int | None = None,
+        metadata: dict[str, str] | None = None,
+    ) -> StorageMetadata:
+        """Stream an artifact into object storage with chunked upload, hashing, and size validation."""
+        try:
+            key = build_artifact_storage_key(
+                tenant_id=tenant_id,
+                job_id=job_id,
+                artifact_type=artifact_type,
+                content_hash=expected_hash,
+                version=version,
+                artifact_id=artifact_id,
+            )
+
+            user_meta = dict(metadata or {})
+            user_meta.setdefault("artifact-type", artifact_type)
+            user_meta.setdefault("schema-version", schema_version)
+
+            return await self._adapter.stream_upload(
+                key=key,
+                content_stream=content_stream,
+                content_type=content_type,
+                expected_hash=expected_hash,
+                expected_size=expected_size,
+                metadata=user_meta,
+            )
+        except Exception as exc:
+            logger.exception(
+                "ArtifactStorageService.stream_store_artifact failed | job_id=%s type=%s | %s: %s",
+                job_id,
+                artifact_type,
+                type(exc).__name__,
+                exc,
+            )
+            raise
+
+    @log_errors
+    async def stream_retrieve_artifact(
+        self,
+        *,
+        storage_ref: str,
+        expected_hash: str | None = None,
+        chunk_size: int = 65_536,
+    ) -> tuple[StorageMetadata, Any]:
+        """Stream artifact content from storage with on-the-fly hash verification."""
+        try:
+            bucket, key = parse_storage_uri(storage_ref)
+            if bucket != self._adapter.bucket:
+                raise InvalidStorageKeyException(
+                    f"Storage bucket '{bucket}' in reference does not match configured application bucket.",
+                    key=key,
+                )
+            return await self._adapter.stream_download(
+                key=key,
+                chunk_size=chunk_size,
+                expected_hash=expected_hash,
+            )
+        except Exception as exc:
+            logger.exception(
+                "ArtifactStorageService.stream_retrieve_artifact failed | storage_ref=%s | %s: %s",
+                storage_ref,
+                type(exc).__name__,
+                exc,
+            )
+            raise
+
+    @log_errors
+    async def verify_artifact_integrity(
+        self,
+        *,
+        storage_ref: str,
+        expected_hash: str,
+        expected_size: int | None = None,
+    ) -> bool:
+        """Explicitly verify that the object exists and its byte hash matches expected_hash."""
+        try:
+            bucket, key = parse_storage_uri(storage_ref)
+            if bucket != self._adapter.bucket:
+                raise InvalidStorageKeyException(
+                    f"Storage bucket '{bucket}' in reference does not match configured application bucket.",
+                    key=key,
+                )
+
+            meta = await self._adapter.head_object(key=key)
+            if meta is None:
+                from modernization_platform.storage.exceptions import ObjectNotFoundException
+
+                raise ObjectNotFoundException(
+                    f"Object at '{storage_ref}' does not exist in storage.",
+                    key=key,
+                )
+
+            if expected_size is not None and meta.size_bytes != expected_size:
+                from modernization_platform.storage.exceptions import ChecksumMismatchException
+
+                raise ChecksumMismatchException(
+                    f"Object size mismatch: expected {expected_size} bytes, got {meta.size_bytes} bytes."
+                )
+
+            # Read stream to calculate full SHA-256 hash and verify
+            _download_meta, stream = await self._adapter.stream_download(
+                key=key,
+                expected_hash=expected_hash,
+            )
+            async for _chunk in stream:
+                pass
+
+            return True
+        except Exception as exc:
+            logger.exception(
+                "ArtifactStorageService.verify_artifact_integrity failed | storage_ref=%s | %s: %s",
+                storage_ref,
+                type(exc).__name__,
+                exc,
+            )
+            raise
+
+    @log_errors
     async def delete_artifact(self, *, storage_ref: str) -> bool:
         """Delete underlying storage object for a given storage URI."""
         try:

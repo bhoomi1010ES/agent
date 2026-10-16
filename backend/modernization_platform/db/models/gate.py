@@ -13,6 +13,7 @@ from modernization_platform.db.types import GUID, UTCDateTime
 
 if TYPE_CHECKING:
     from modernization_platform.db.models.gate_decision import GateDecision
+    from modernization_platform.db.models.identity import UserAccount
     from modernization_platform.db.models.job import Job
 
 
@@ -53,11 +54,29 @@ class Gate(Base):
         default=lambda: datetime.now(UTC),
         comment="Timestamp when gate was opened and graph execution paused (UTC)",
     )
+    timeout_at: Mapped[datetime | None] = mapped_column(
+        UTCDateTime,
+        nullable=True,
+        default=None,
+        index=True,
+        comment="Timestamp when gate auto-pauses waiting for human decision (UTC)",
+    )
+    workflow_thread_id: Mapped[str | None] = mapped_column(
+        String(128),
+        nullable=True,
+        index=True,
+        comment="Associated LangGraph checkpoint thread identifier",
+    )
     artifact_versions_shown: Mapped[dict[str, Any]] = mapped_column(
         JSONB,
         nullable=False,
         default=dict,
         comment="Snapshot of artifact identifiers and versions presented for human review",
+    )
+    artifact_diff_ref: Mapped[str | None] = mapped_column(
+        String(512),
+        nullable=True,
+        comment="Reference or diff URI presented to reviewers",
     )
     needs_human_flags: Mapped[list[dict[str, Any]]] = mapped_column(
         JSONB,
@@ -77,14 +96,41 @@ class Gate(Base):
         default=None,
         comment="Timestamp when human approver resolved this gate",
     )
+    resolved_by: Mapped[str | None] = mapped_column(
+        String(255),
+        nullable=True,
+        comment="Identity string of approver who resolved gate",
+    )
+    resolved_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        GUID,
+        ForeignKey("user_account.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+        comment="Foreign key to user account of resolver",
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        UTCDateTime,
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+        comment="Timestamp of last gate state update",
+    )
 
     # Relationships
     job: Mapped["Job"] = relationship("Job", back_populates="gates")
+    resolved_by_user: Mapped["UserAccount | None"] = relationship(
+        "UserAccount",
+        foreign_keys=[resolved_by_user_id],
+    )
     decisions: Mapped[list["GateDecision"]] = relationship(
         "GateDecision",
         back_populates="gate",
         cascade="all, delete-orphan",
         order_by="GateDecision.decided_at",
+        lazy="selectin",
     )
 
-    __table_args__ = (Index("ix_gate_job_type_state", "job_id", "gate_type", "state"),)
+    __table_args__ = (
+        Index("ix_gate_job_type_state", "job_id", "gate_type", "state"),
+        Index("ix_gate_pending_timeout", "state", "timeout_at"),
+    )

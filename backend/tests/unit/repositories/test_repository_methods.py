@@ -38,7 +38,7 @@ async def test_job_repository_unit(mock_session: AsyncMock) -> None:
         target_stack_spec={"language": "python", "framework": "fastapi"},
     )
     assert job.owner == "architect_team"
-    assert job.status == "pending"
+    assert job.status in ("pending", "queued")
     mock_session.add.assert_called_once_with(job)
     mock_session.flush.assert_awaited()
 

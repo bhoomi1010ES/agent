@@ -30,7 +30,9 @@ wheels/
 
 # Testing and coverage
 .pytest_cache/
+.pytest_temp/
 .coverage
+
 .coverage.*
 htmlcov/
 coverage.xml

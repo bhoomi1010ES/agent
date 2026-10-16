@@ -6,11 +6,14 @@ from enum import StrEnum
 class JobStatus(StrEnum):
     """Persisted modernization job lifecycle states."""
 
-    PENDING = "pending"
+    QUEUED = "queued"
+    PENDING = "pending"  # Legacy compatibility alias
     RUNNING = "running"
+    AWAITING_APPROVAL = "awaiting_approval"
     PAUSED = "paused"
-    COMPLETED = "completed"
     FAILED = "failed"
+    CANCELLED = "cancelled"
+    COMPLETED = "completed"
 
 
 class GateDecisionValue(StrEnum):
@@ -18,3 +21,7 @@ class GateDecisionValue(StrEnum):
 
     APPROVED = "approved"
     REJECTED = "rejected"
+    WAIVED = "waived"
+
+
+__all__ = ["GateDecisionValue", "JobStatus"]

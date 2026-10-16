@@ -1,4 +1,4 @@
-"""Typed job request, response, status, budget, and pagination contracts."""
+"""Typed job request, response, status, budget, lifecycle, and pagination contracts."""
 
 import uuid
 from typing import Any
@@ -39,6 +39,27 @@ class JobCreateResponse(TransportResponse):
     job_id: uuid.UUID
     status: JobStatus
     created_at: AwareDatetime
+    version: int = Field(default=1, ge=1)
+
+
+class JobLifecycleActionRequest(TransportRequest):
+    """Payload for lifecycle mutations requiring optimistic concurrency verification."""
+
+    expected_version: int = Field(gt=0, description="Caller's expected version before mutation")
+    reason: ShortText | None = Field(
+        default=None, description="Optional human or system justification"
+    )
+
+
+class JobLifecycleActionResponse(TransportResponse):
+    """Response returned upon successful lifecycle mutation."""
+
+    job_id: uuid.UUID
+    status: JobStatus
+    version: int = Field(gt=0)
+    action: str
+    updated_at: AwareDatetime
+    message: ShortText | None = None
 
 
 class JobStatusResponse(TransportResponse):
@@ -47,9 +68,18 @@ class JobStatusResponse(TransportResponse):
     job_id: uuid.UUID
     status: JobStatus
     current_stage: Identifier | None = None
+    version: int = Field(default=1, ge=1)
     needs_human: bool
     status_message: ShortText | None = None
+    failure_classification: ShortText | None = None
+    failure_reason: ShortText | None = None
+    created_at: AwareDatetime | None = None
     updated_at: AwareDatetime
+    started_at: AwareDatetime | None = None
+    paused_at: AwareDatetime | None = None
+    completed_at: AwareDatetime | None = None
+    cancelled_at: AwareDatetime | None = None
+    failed_at: AwareDatetime | None = None
 
 
 class PaginationRequest(TransportRequest):
@@ -84,6 +114,8 @@ class JobSummaryResponse(TransportResponse):
     source_ref: str
     target_stack_spec: dict[str, Any]
     budget: dict[str, Any]
+    version: int = Field(default=1, ge=1)
+    current_stage: str | None = None
     created_at: AwareDatetime
     updated_at: AwareDatetime
     finished_at: AwareDatetime | None = None
@@ -106,9 +138,18 @@ class JobDetailResponse(TransportResponse):
     source_ref: str
     target_stack_spec: dict[str, Any]
     budget: dict[str, Any]
+    version: int = Field(default=1, ge=1)
+    current_stage: str | None = None
     created_at: AwareDatetime
     updated_at: AwareDatetime
+    started_at: AwareDatetime | None = None
+    paused_at: AwareDatetime | None = None
+    completed_at: AwareDatetime | None = None
+    cancelled_at: AwareDatetime | None = None
+    failed_at: AwareDatetime | None = None
     finished_at: AwareDatetime | None = None
+    failure_reason: str | None = None
+    failure_classification: str | None = None
 
 
 __all__ = [
@@ -116,6 +157,8 @@ __all__ = [
     "JobCreateRequest",
     "JobCreateResponse",
     "JobDetailResponse",
+    "JobLifecycleActionRequest",
+    "JobLifecycleActionResponse",
     "JobListResponse",
     "JobStatusResponse",
     "JobSummaryResponse",

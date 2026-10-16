@@ -50,6 +50,8 @@ def create_storage_adapter(settings: Settings | None = None) -> StorageAdapter:
             max_artifact_size_bytes=cfg.storage_max_artifact_size_bytes,
             timeout_seconds=cfg.storage_timeout_seconds,
             max_retries=cfg.storage_max_retries,
+            multipart_threshold=cfg.storage_multipart_threshold_bytes,
+            multipart_chunk_size=cfg.storage_multipart_chunk_bytes,
         )
     except Exception as exc:
         logger.exception("create_storage_adapter failed | %s: %s", type(exc).__name__, exc)

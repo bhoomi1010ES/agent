@@ -109,7 +109,8 @@ class ArtifactPersistenceService:
             await self._validate_producer(job_id, producer, producer_execution_id, model_prompt)
 
             # Store in object storage first
-            storage_ref, actual_hash, _meta = await self._storage.store_artifact(
+            # Store in object storage first
+            storage_ref, actual_hash, meta = await self._storage.store_artifact(
                 tenant_id=tenant_id,
                 job_id=job_id,
                 artifact_type=expected_type.value,
@@ -131,6 +132,9 @@ class ArtifactPersistenceService:
                     ),
                     produced_by_run_id=producer_execution_id,
                     artifact_id=artifact_id,
+                    status="available",
+                    size_bytes=meta.size_bytes,
+                    content_type=meta.content_type,
                 )
             except Exception as db_exc:
                 # Compensating transaction: remove object from storage so no orphaned object remains
@@ -195,6 +199,127 @@ class ArtifactPersistenceService:
             )
 
     @log_errors
+    async def store_streamed_artifact(
+        self,
+        *,
+        authorization_context: AuthenticatedPrincipal | WorkerAuthorizationContext,
+        tenant_id: uuid.UUID,
+        job_id: uuid.UUID,
+        artifact_type: str,
+        content_stream: Any,
+        content_type: str = "application/octet-stream",
+        schema_version: str = "1.0.0",
+        producer: ProducerIdentity,
+        parent_artifact_ids: list[uuid.UUID] | None = None,
+        producer_execution_id: uuid.UUID | None = None,
+        model_prompt: ModelPromptProvenance | None = None,
+        claimed_content_hash: str | None = None,
+        expected_size: int | None = None,
+        correlation_id: str | None = None,
+        supplementary_metadata: dict[str, Any] | None = None,
+    ) -> ArtifactPersistenceResult:
+        """Stream an artifact into storage, verify hash, and stage DB row with compensating rollback."""
+        parents = parent_artifact_ids or []
+        actor_user_id: uuid.UUID | None = None
+        storage_ref: str | None = None
+        try:
+            actor_user_id = await self._authorize(
+                authorization_context=authorization_context,
+                job_id=job_id,
+            )
+            await self._validate_lineage(job_id, parents)
+            await self._validate_producer(job_id, producer, producer_execution_id, model_prompt)
+
+            artifact_id = uuid.uuid4()
+            meta = await self._storage.stream_store_artifact(
+                tenant_id=tenant_id,
+                job_id=job_id,
+                artifact_type=artifact_type,
+                content_stream=content_stream,
+                content_type=content_type,
+                schema_version=schema_version,
+                artifact_id=artifact_id,
+                expected_hash=claimed_content_hash,
+                expected_size=expected_size,
+            )
+            storage_ref = meta.storage_ref
+
+            try:
+                artifact_metadata_dict = self._metadata_payload(
+                    schema_version, producer, model_prompt
+                )
+                if supplementary_metadata:
+                    artifact_metadata_dict.update(supplementary_metadata)
+
+                artifact_row = await self._artifacts._append_artifact_after_authorization(
+                    job_id=job_id,
+                    artifact_type=artifact_type,
+                    content_hash=meta.content_hash,
+                    storage_ref=storage_ref,
+                    derived_from=[str(parent_id) for parent_id in parents],
+                    artifact_metadata=artifact_metadata_dict,
+                    produced_by_run_id=producer_execution_id,
+                    artifact_id=artifact_id,
+                    status="available",
+                    size_bytes=meta.size_bytes,
+                    content_type=meta.content_type,
+                )
+            except Exception as db_exc:
+                logger.warning(
+                    "Database staging failed for job_id=%s; deleting stored object storage_ref=%s",
+                    job_id,
+                    storage_ref,
+                )
+                try:
+                    await self._storage.delete_artifact(storage_ref=storage_ref)
+                except Exception as cleanup_exc:
+                    logger.error(
+                        "Compensating deletion failed for storage_ref=%s: %s",
+                        storage_ref,
+                        cleanup_exc,
+                    )
+                raise db_exc
+
+            try:
+                enum_type = ArtifactType(artifact_type)
+            except ValueError:
+                enum_type = ArtifactType.REPO_INVENTORY
+
+            metadata = ArtifactMetadata(
+                artifact_id=artifact_row.id,
+                artifact_type=enum_type,
+                schema_version=schema_version,
+                business_version=artifact_row.version,
+                content_hash=artifact_row.content_hash,
+                storage_ref=artifact_row.storage_ref,
+                producer=producer,
+                parent_artifact_ids=parents,
+                created_at=artifact_row.created_at or datetime.now(UTC),
+                job_id=job_id,
+                producer_execution_id=producer_execution_id,
+                model_prompt=model_prompt,
+            )
+            await self._audit.append_event(
+                actor=str(actor_user_id),
+                actor_user_id=actor_user_id,
+                action="ARTIFACT_STORED_AND_STAGED",
+                job_id=job_id,
+                correlation_id=correlation_id,
+                payload={
+                    "artifact_id": str(artifact_row.id),
+                    "artifact_type": artifact_type,
+                    "schema_version": schema_version,
+                    "content_hash": meta.content_hash,
+                    "storage_ref": storage_ref,
+                    "size_bytes": meta.size_bytes,
+                },
+            )
+            return ArtifactPersistenceResult(persisted=True, metadata=metadata)
+        except Exception as exc:
+            logger.exception("store_streamed_artifact failed | %s: %s", type(exc).__name__, exc)
+            raise
+
+    @log_errors
     async def persist(
         self,
         *,
@@ -229,6 +354,11 @@ class ArtifactPersistenceService:
             await self._validate_producer(job_id, producer, producer_execution_id, model_prompt)
 
             artifact_id = uuid.uuid4()
+            payload_size = (
+                len(validated.canonical_payload)
+                if isinstance(validated.canonical_payload, (bytes, str))
+                else None
+            )
             artifact_row = await self._artifacts._append_artifact_after_authorization(
                 job_id=job_id,
                 artifact_type=expected_type.value,
@@ -240,6 +370,9 @@ class ArtifactPersistenceService:
                 ),
                 produced_by_run_id=producer_execution_id,
                 artifact_id=artifact_id,
+                status="available",
+                size_bytes=payload_size,
+                content_type="application/json",
             )
             metadata = ArtifactMetadata(
                 artifact_id=artifact_row.id,

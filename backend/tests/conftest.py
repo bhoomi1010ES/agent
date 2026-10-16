@@ -1,6 +1,4 @@
-"""Global pytest fixtures and test client configuration."""
-
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
 
 import pytest
 from fastapi import FastAPI
@@ -8,6 +6,8 @@ from httpx import ASGITransport, AsyncClient
 
 from modernization_platform.app import create_app
 from modernization_platform.config.settings import Settings
+
+pytest_plugins = ["tests.integration.db.conftest"]
 
 
 @pytest.fixture
@@ -44,3 +44,12 @@ async def async_client(app: FastAPI) -> AsyncIterator[AsyncClient]:
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://testserver") as client:
         yield client
+
+
+@pytest.fixture(autouse=True)
+def _clean_default_pricing_registry() -> Iterator[None]:
+    """Ensure global default_pricing_registry is never polluted across test cases."""
+    from modernization_platform.domain.model_gateway.pricing import default_pricing_registry
+
+    yield
+    default_pricing_registry.reset()

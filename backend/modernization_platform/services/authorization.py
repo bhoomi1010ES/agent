@@ -36,6 +36,7 @@ class AuthorizationService:
     """Enforce permission and resource scope before persistence operations."""
 
     def __init__(self, session: AsyncSession) -> None:
+        self.session = session
         self._jobs = JobRepository(session)
         self._artifacts = ArtifactRepository(session)
         self._gates = GateRepository(session)
@@ -337,6 +338,165 @@ class AuthorizationService:
                 storage_ref=artifact.storage_ref,
                 expected_hash=artifact.content_hash,
             )
+        except Exception:
+            raise
+
+    async def get_artifact_lineage(
+        self,
+        *,
+        principal: AuthenticatedPrincipal,
+        artifact_id: uuid.UUID,
+    ) -> tuple[Artifact, list[Artifact], list[Artifact]]:
+        """Retrieve direct parents and children lineage graph for an authorized artifact."""
+        try:
+            artifact = await self.get_artifact(principal=principal, artifact_id=artifact_id)
+            # Resolve parents
+            parent_ids: list[uuid.UUID] = []
+            for p in artifact.derived_from or []:
+                try:
+                    parent_ids.append(uuid.UUID(str(p)))
+                except (ValueError, TypeError):
+                    continue
+            parents = await self._artifacts._get_by_ids_unscoped(parent_ids)
+            parents = [p for p in parents if p.job_id == artifact.job_id]
+
+            # Resolve children (dependents)
+            dependents = await self._artifacts.find_dependents_unscoped(artifact_id)
+            children = [d for d in dependents if d.job_id == artifact.job_id]
+
+            return artifact, parents, children
+        except Exception:
+            raise
+
+    async def stream_artifact_content(
+        self,
+        *,
+        principal: AuthenticatedPrincipal,
+        artifact_id: uuid.UUID,
+        storage_service: Any = None,
+        chunk_size: int = 65_536,
+    ) -> tuple[Artifact, Any, Any]:
+        """Stream verified artifact content after verifying job authorization."""
+        from modernization_platform.storage.service import ArtifactStorageService
+
+        try:
+            artifact = await self.get_artifact(principal=principal, artifact_id=artifact_id)
+            storage = storage_service or ArtifactStorageService()
+            meta, stream = await storage.stream_retrieve_artifact(
+                storage_ref=artifact.storage_ref,
+                expected_hash=artifact.content_hash,
+                chunk_size=chunk_size,
+            )
+            return artifact, meta, stream
+        except Exception:
+            raise
+
+    async def verify_artifact_integrity(
+        self,
+        *,
+        principal: AuthenticatedPrincipal,
+        artifact_id: uuid.UUID,
+        storage_service: Any = None,
+        correlation_id: str | None = None,
+    ) -> tuple[Artifact, bool]:
+        """Verify storage object presence and hash integrity for an authorized artifact."""
+        from modernization_platform.storage.service import ArtifactStorageService
+
+        try:
+            artifact = await self.get_artifact(principal=principal, artifact_id=artifact_id)
+            storage = storage_service or ArtifactStorageService()
+            try:
+                verified = await storage.verify_artifact_integrity(
+                    storage_ref=artifact.storage_ref,
+                    expected_hash=artifact.content_hash,
+                    expected_size=artifact.size_bytes,
+                )
+                await self._audit.append_event(
+                    actor=str(principal.user_id),
+                    actor_user_id=principal.user_id,
+                    action="ARTIFACT_INTEGRITY_CHECK",
+                    job_id=artifact.job_id,
+                    correlation_id=correlation_id,
+                    payload={
+                        "artifact_id": str(artifact.id),
+                        "status": "PASS",
+                        "content_hash": artifact.content_hash,
+                    },
+                )
+                return artifact, verified
+            except Exception as exc:
+                await self._audit.append_event(
+                    actor=str(principal.user_id),
+                    actor_user_id=principal.user_id,
+                    action="ARTIFACT_INTEGRITY_FAILURE",
+                    job_id=artifact.job_id,
+                    correlation_id=correlation_id,
+                    payload={
+                        "artifact_id": str(artifact.id),
+                        "status": "FAIL",
+                        "error": type(exc).__name__,
+                    },
+                )
+                raise
+        except Exception:
+            raise
+
+    async def delete_artifact(
+        self,
+        *,
+        principal: AuthenticatedPrincipal,
+        artifact_id: uuid.UUID,
+        storage_service: Any = None,
+        correlation_id: str | None = None,
+    ) -> bool:
+        """Safely delete an artifact subject to active job protection and lineage retention rules."""
+        from modernization_platform.storage.retention import StorageRetentionPolicy
+        from modernization_platform.storage.service import ArtifactStorageService
+
+        try:
+            require_permission(principal, Permission.ARTIFACT_CREATE)
+            artifact = await self.get_artifact(principal=principal, artifact_id=artifact_id)
+            job = await self.get_job(principal, artifact.job_id)
+
+            dependents = await self._artifacts.find_dependents_unscoped(artifact_id)
+            policy = StorageRetentionPolicy()
+            try:
+                policy.enforce_can_delete(
+                    artifact_id=artifact.id,
+                    job_id=job.id,
+                    job_status=job.status,
+                    downstream_dependent_ids=[d.id for d in dependents],
+                )
+            except Exception as policy_exc:
+                await self._audit.append_event(
+                    actor=str(principal.user_id),
+                    actor_user_id=principal.user_id,
+                    action="ARTIFACT_DELETE_REJECTED",
+                    job_id=job.id,
+                    correlation_id=correlation_id,
+                    payload={
+                        "artifact_id": str(artifact.id),
+                        "reason": str(policy_exc),
+                    },
+                )
+                raise
+
+            storage = storage_service or ArtifactStorageService()
+            await storage.delete_artifact(storage_ref=artifact.storage_ref)
+            await self._artifacts.delete_artifact(artifact_id, hard_delete=False)
+
+            await self._audit.append_event(
+                actor=str(principal.user_id),
+                actor_user_id=principal.user_id,
+                action="ARTIFACT_DELETE",
+                job_id=job.id,
+                correlation_id=correlation_id,
+                payload={
+                    "artifact_id": str(artifact.id),
+                    "storage_ref": artifact.storage_ref,
+                },
+            )
+            return True
         except Exception:
             raise
 

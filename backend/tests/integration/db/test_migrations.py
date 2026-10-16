@@ -84,10 +84,16 @@ def test_migration_lifecycle(alembic_config: Config) -> None:
         "gate_decision",
         "audit_event",
         "auth_session",
+        "idempotency_record",
         "job_member",
+        "source_provenance",
         "tenant",
         "tenant_membership",
         "user_account",
+        "task",
+        "budget_account",
+        "budget_reservation",
+        "model_execution",
         "alembic_version",
     }
 
@@ -108,11 +114,13 @@ def test_migration_lifecycle(alembic_config: Config) -> None:
                 item["name"] for item in inspector.get_check_constraints("tenant_membership")
             }
             job_columns = {item["name"]: item["type"] for item in inspector.get_columns("job")}
+            artifact_columns = {item["name"] for item in inspector.get_columns("artifact")}
 
         assert expected_tables.issubset(table_names)
         assert "ck_artifact_version_positive" in artifact_constraints
         assert "ck_module_attempt_number_positive" in attempt_constraints
         assert "ck_tenant_membership_role_allowed" in membership_constraints
+        assert {"status", "size_bytes", "content_type"}.issubset(artifact_columns)
         assert isinstance(job_columns["id"], UUID)
         assert isinstance(job_columns["tenant_id"], UUID)
 

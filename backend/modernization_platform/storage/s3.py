@@ -4,6 +4,7 @@ import asyncio
 import contextlib
 import hashlib
 import logging
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from typing import Any
 
@@ -19,6 +20,8 @@ from botocore.exceptions import (
 from modernization_platform.core.decorators import log_errors
 from modernization_platform.storage.base import StorageAdapter
 from modernization_platform.storage.exceptions import (
+    ChecksumMismatchException,
+    EmptyArtifactException,
     ObjectNotFoundException,
     OversizedArtifactException,
     StorageException,
@@ -44,6 +47,8 @@ class S3StorageAdapter(StorageAdapter):
         secret_access_key: str | None = None,
         use_ssl: bool = False,
         max_artifact_size_bytes: int = 52_428_800,
+        multipart_threshold: int = 8_388_608,
+        multipart_chunk_size: int = 5_242_880,
         timeout_seconds: float = 30.0,
         max_retries: int = 3,
     ) -> None:
@@ -53,6 +58,8 @@ class S3StorageAdapter(StorageAdapter):
         self.access_key_id = access_key_id
         self.secret_access_key = secret_access_key
         self.use_ssl = use_ssl
+        self.multipart_threshold = multipart_threshold
+        self.multipart_chunk_size = multipart_chunk_size
         self.timeout_seconds = timeout_seconds
         self.max_retries = max_retries
 
@@ -254,6 +261,231 @@ class S3StorageAdapter(StorageAdapter):
                 "S3StorageAdapter._do_delete failed | key=%s | %s: %s", key, type(exc).__name__, exc
             )
             raise self._translate_error("delete_object", exc, key=key) from exc
+
+    @log_errors
+    async def _do_stream_upload(
+        self,
+        *,
+        key: str,
+        content_stream: AsyncIterator[bytes],
+        content_type: str,
+        expected_hash: str | None,
+        expected_size: int | None,
+        metadata: dict[str, str],
+    ) -> StorageMetadata:
+        try:
+            hasher = hashlib.sha256()
+            first_chunks: list[bytes] = []
+            buffered_size = 0
+            is_stream_finished = False
+
+            async for chunk in content_stream:
+                if not chunk:
+                    continue
+                buffered_size += len(chunk)
+                if buffered_size > self.max_artifact_size_bytes:
+                    raise OversizedArtifactException(
+                        f"Artifact payload exceeded maximum size of {self.max_artifact_size_bytes} bytes during streaming.",
+                        size_bytes=buffered_size,
+                        max_bytes=self.max_artifact_size_bytes,
+                    )
+                hasher.update(chunk)
+                first_chunks.append(chunk)
+                if buffered_size >= self.multipart_threshold:
+                    break
+            else:
+                is_stream_finished = True
+
+            # If stream finished under threshold, use single put_object
+            if is_stream_finished:
+                data = b"".join(first_chunks)
+                if len(data) == 0:
+                    raise EmptyArtifactException("Artifact payload cannot be empty (0 bytes).")
+                actual_hash = hasher.hexdigest()
+                if expected_hash is not None and expected_hash.lower() != actual_hash.lower():
+                    raise ChecksumMismatchException(
+                        f"Claimed content hash ({expected_hash}) does not match payload digest ({actual_hash}).",
+                        expected_hash=expected_hash,
+                        actual_hash=actual_hash,
+                    )
+                return await self._do_put(
+                    key=key,
+                    data=data,
+                    content_type=content_type,
+                    content_hash=actual_hash,
+                    metadata=metadata,
+                )
+
+            # Initiate S3 multipart upload
+            custom_meta = {**metadata}
+            async with self._client_context() as client:
+                mp_resp = await client.create_multipart_upload(
+                    Bucket=self.bucket,
+                    Key=key,
+                    ContentType=content_type,
+                    Metadata=custom_meta,
+                )
+                upload_id = mp_resp["UploadId"]
+                parts: list[dict[str, Any]] = []
+                part_number = 1
+                current_buffer = bytearray(b"".join(first_chunks))
+                total_bytes = len(current_buffer)
+
+                try:
+                    while len(current_buffer) >= self.multipart_chunk_size:
+                        part_data = bytes(current_buffer[: self.multipart_chunk_size])
+                        del current_buffer[: self.multipart_chunk_size]
+                        part_resp = await client.upload_part(
+                            Bucket=self.bucket,
+                            Key=key,
+                            UploadId=upload_id,
+                            PartNumber=part_number,
+                            Body=part_data,
+                        )
+                        parts.append({"PartNumber": part_number, "ETag": part_resp["ETag"]})
+                        part_number += 1
+
+                    async for chunk in content_stream:
+                        if not chunk:
+                            continue
+                        total_bytes += len(chunk)
+                        if total_bytes > self.max_artifact_size_bytes:
+                            raise OversizedArtifactException(
+                                f"Artifact payload exceeded maximum size of {self.max_artifact_size_bytes} bytes during streaming.",
+                                size_bytes=total_bytes,
+                                max_bytes=self.max_artifact_size_bytes,
+                            )
+                        hasher.update(chunk)
+                        current_buffer.extend(chunk)
+
+                        while len(current_buffer) >= self.multipart_chunk_size:
+                            part_data = bytes(current_buffer[: self.multipart_chunk_size])
+                            del current_buffer[: self.multipart_chunk_size]
+                            part_resp = await client.upload_part(
+                                Bucket=self.bucket,
+                                Key=key,
+                                UploadId=upload_id,
+                                PartNumber=part_number,
+                                Body=part_data,
+                            )
+                            parts.append({"PartNumber": part_number, "ETag": part_resp["ETag"]})
+                            part_number += 1
+
+                    if len(current_buffer) > 0:
+                        part_resp = await client.upload_part(
+                            Bucket=self.bucket,
+                            Key=key,
+                            UploadId=upload_id,
+                            PartNumber=part_number,
+                            Body=bytes(current_buffer),
+                        )
+                        parts.append({"PartNumber": part_number, "ETag": part_resp["ETag"]})
+
+                    actual_hash = hasher.hexdigest()
+                    if expected_hash is not None and expected_hash.lower() != actual_hash.lower():
+                        raise ChecksumMismatchException(
+                            f"Claimed content hash ({expected_hash}) does not match payload digest ({actual_hash}).",
+                            expected_hash=expected_hash,
+                            actual_hash=actual_hash,
+                        )
+
+                    await client.complete_multipart_upload(
+                        Bucket=self.bucket,
+                        Key=key,
+                        UploadId=upload_id,
+                        MultipartUpload={"Parts": parts},
+                    )
+
+                    now = datetime.now(UTC)
+                    storage_ref = build_storage_uri(self.bucket, key)
+                    return StorageMetadata(
+                        key=key,
+                        bucket=self.bucket,
+                        size_bytes=total_bytes,
+                        content_hash=actual_hash,
+                        content_type=content_type,
+                        created_at=now,
+                        storage_ref=storage_ref,
+                        custom_metadata=metadata,
+                    )
+                except Exception as upload_exc:
+                    with contextlib.suppress(Exception):
+                        await client.abort_multipart_upload(
+                            Bucket=self.bucket,
+                            Key=key,
+                            UploadId=upload_id,
+                        )
+                    raise self._translate_error(
+                        "stream_upload", upload_exc, key=key
+                    ) from upload_exc
+        except StorageException:
+            raise
+        except Exception as exc:
+            logger.exception("S3StorageAdapter._do_stream_upload failed | key=%s: %s", key, exc)
+            raise self._translate_error("stream_upload", exc, key=key) from exc
+
+    @log_errors
+    async def _do_stream_download(
+        self,
+        *,
+        key: str,
+        chunk_size: int,
+        expected_hash: str | None,
+    ) -> tuple[StorageMetadata, AsyncIterator[bytes]]:
+        try:
+            client_ctx = self._client_context()
+            client = await client_ctx.__aenter__()
+            try:
+                response = await client.get_object(Bucket=self.bucket, Key=key)
+            except Exception as get_exc:
+                await client_ctx.__aexit__(None, None, None)
+                raise self._translate_error("stream_download", get_exc, key=key) from get_exc
+
+            meta_dict = response.get("Metadata", {})
+            content_type = response.get("ContentType", "application/octet-stream")
+            last_modified = response.get("LastModified", datetime.now(UTC))
+            content_length = response.get("ContentLength", 0)
+            content_hash = meta_dict.get("content-hash") or (expected_hash or "0" * 64)
+            storage_ref = build_storage_uri(self.bucket, key)
+
+            metadata = StorageMetadata(
+                key=key,
+                bucket=self.bucket,
+                size_bytes=content_length,
+                content_hash=content_hash,
+                content_type=content_type,
+                created_at=last_modified,
+                storage_ref=storage_ref,
+                custom_metadata={k: v for k, v in meta_dict.items() if k != "content-hash"},
+            )
+
+            async def _body_stream() -> AsyncIterator[bytes]:
+                hasher = hashlib.sha256()
+                try:
+                    async with response["Body"] as stream:
+                        while True:
+                            chunk = await stream.read(chunk_size)
+                            if not chunk:
+                                break
+                            hasher.update(chunk)
+                            yield chunk
+
+                    actual_hash = hasher.hexdigest()
+                    if expected_hash is not None and expected_hash.lower() != actual_hash.lower():
+                        raise ChecksumMismatchException(
+                            f"Retrieved content digest ({actual_hash}) does not match expected hash ({expected_hash}).",
+                            expected_hash=expected_hash,
+                            actual_hash=actual_hash,
+                        )
+                finally:
+                    await client_ctx.__aexit__(None, None, None)
+
+            return metadata, _body_stream()
+        except StorageException:
+            raise
+        except Exception as exc:
+            logger.exception("S3StorageAdapter._do_stream_download failed | key=%s: %s", key, exc)
+            raise self._translate_error("stream_download", exc, key=key) from exc
 
     @log_errors
     async def check_health(self) -> bool:

@@ -32,6 +32,9 @@ class ArtifactRepository(BaseRepository[Artifact]):
         produced_by_run_id: uuid.UUID | None = None,
         version: int | None = None,
         artifact_id: uuid.UUID | None = None,
+        status: str = "available",
+        size_bytes: int | None = None,
+        content_type: str | None = "application/json",
     ) -> Artifact:
         """Append a new versioned, immutable artifact record."""
         try:
@@ -56,12 +59,57 @@ class ArtifactRepository(BaseRepository[Artifact]):
                 produced_by_run_id=produced_by_run_id,
                 derived_from=derived_from or [],
                 artifact_metadata=artifact_metadata or {},
+                status=status,
+                size_bytes=size_bytes,
+                content_type=content_type,
             )
             self.session.add(artifact)
             await self.session.flush()
             return artifact
         except Exception as exc:
             raise self._translate_error("_append_artifact_after_authorization", exc) from exc
+
+    async def update_status(self, artifact_id: uuid.UUID, status: str) -> Artifact | None:
+        """Update lifecycle status of an artifact."""
+        try:
+            artifact = await self._get_by_id_unscoped(artifact_id)
+            if artifact is not None:
+                artifact.status = status
+                await self.session.flush()
+            return artifact
+        except Exception as exc:
+            raise self._translate_error("update_status", exc) from exc
+
+    async def find_dependents_unscoped(self, artifact_id: uuid.UUID) -> list[Artifact]:
+        """Find any artifacts whose derived_from references the given artifact_id."""
+        try:
+            str_id = str(artifact_id)
+            try:
+                stmt = select(Artifact).where(Artifact.derived_from.contains([str_id]))
+                res = await self.session.execute(stmt)
+                return list(res.scalars().all())
+            except Exception:
+                stmt = select(Artifact)
+                res = await self.session.execute(stmt)
+                all_arts = res.scalars().all()
+                return [a for a in all_arts if str_id in (a.derived_from or [])]
+        except Exception as exc:
+            raise self._translate_error("find_dependents_unscoped", exc) from exc
+
+    async def delete_artifact(self, artifact_id: uuid.UUID, hard_delete: bool = False) -> bool:
+        """Delete an artifact record (soft delete to 'deleted' status or hard delete)."""
+        try:
+            artifact = await self._get_by_id_unscoped(artifact_id)
+            if artifact is None:
+                return False
+            if hard_delete:
+                await self.session.delete(artifact)
+            else:
+                artifact.status = "deleted"
+            await self.session.flush()
+            return True
+        except Exception as exc:
+            raise self._translate_error("delete_artifact", exc) from exc
 
     async def _get_by_id_unscoped(self, artifact_id: uuid.UUID) -> Artifact | None:
         """Internal lookup for persistence workflows after authorization."""

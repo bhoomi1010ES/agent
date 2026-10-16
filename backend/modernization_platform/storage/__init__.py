@@ -2,12 +2,19 @@
 
 from modernization_platform.storage.base import StorageAdapter
 from modernization_platform.storage.exceptions import (
+    ActiveJobArtifactProtectionException,
+    ArtifactReferentialIntegrityException,
     ChecksumMismatchException,
     EmptyArtifactException,
+    IntegrityVerificationFailedException,
     InvalidStorageKeyException,
+    ObjectAlreadyExistsException,
     ObjectNotFoundException,
     OversizedArtifactException,
+    StorageAuthenticationException,
+    StorageConfigurationException,
     StorageException,
+    StorageOperationFailedException,
     StoragePartialUploadException,
     StoragePermissionException,
     StorageTimeoutException,
@@ -25,25 +32,38 @@ from modernization_platform.storage.keys import (
 )
 from modernization_platform.storage.memory import MemoryStorageAdapter
 from modernization_platform.storage.models import StorageMetadata, StoredObject
+from modernization_platform.storage.retention import (
+    DEFAULT_PROTECTED_JOB_STATUSES,
+    StorageRetentionPolicy,
+)
 from modernization_platform.storage.s3 import S3StorageAdapter
 from modernization_platform.storage.service import ArtifactStorageService
 
 __all__ = [
+    "DEFAULT_PROTECTED_JOB_STATUSES",
     "MAX_KEY_LENGTH",
     "MAX_METADATA_BYTES",
+    "ActiveJobArtifactProtectionException",
+    "ArtifactReferentialIntegrityException",
     "ArtifactStorageService",
     "ChecksumMismatchException",
     "EmptyArtifactException",
+    "IntegrityVerificationFailedException",
     "InvalidStorageKeyException",
     "MemoryStorageAdapter",
+    "ObjectAlreadyExistsException",
     "ObjectNotFoundException",
     "OversizedArtifactException",
     "S3StorageAdapter",
     "StorageAdapter",
+    "StorageAuthenticationException",
+    "StorageConfigurationException",
     "StorageException",
     "StorageMetadata",
+    "StorageOperationFailedException",
     "StoragePartialUploadException",
     "StoragePermissionException",
+    "StorageRetentionPolicy",
     "StorageTimeoutException",
     "StorageUnavailableException",
     "StoredObject",

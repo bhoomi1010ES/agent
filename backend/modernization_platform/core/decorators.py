@@ -17,6 +17,11 @@ def log_errors[F: Callable[..., Any]](func: F) -> F:
     Complies with Rule 1 of production-engineering-rules.md.
     """
     try:
+        try:
+            from langgraph.errors import GraphInterrupt
+        except ImportError:
+            GraphInterrupt = None  # type: ignore[misc,assignment]
+
         if inspect.iscoroutinefunction(func):
 
             @functools.wraps(func)
@@ -24,6 +29,8 @@ def log_errors[F: Callable[..., Any]](func: F) -> F:
                 try:
                     return await func(*args, **kwargs)
                 except Exception as exc:
+                    if GraphInterrupt is not None and isinstance(exc, GraphInterrupt):
+                        raise
                     cid = get_correlation_id()
                     logger.exception(
                         "Error in async function '%s' | correlation_id=%s | %s: %s",
@@ -41,6 +48,8 @@ def log_errors[F: Callable[..., Any]](func: F) -> F:
             try:
                 return func(*args, **kwargs)
             except Exception as exc:
+                if GraphInterrupt is not None and isinstance(exc, GraphInterrupt):
+                    raise
                 cid = get_correlation_id()
                 logger.exception(
                     "Error in sync function '%s' | correlation_id=%s | %s: %s",

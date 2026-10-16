@@ -112,18 +112,29 @@ def build_artifact_storage_key(
     tenant_id: uuid.UUID,
     job_id: uuid.UUID,
     artifact_type: str,
-    content_hash: str,
+    content_hash: str | None = None,
     version: int | None = None,
+    artifact_id: uuid.UUID | None = None,
 ) -> str:
     """Build an opaque, tenant-scoped, tamper-proof storage key.
 
-    Format: artifacts/{tenant_id}/{job_id}/{artifact_type}/v{version}_{hash[:16]}.json
+    Formats:
+    - Hash-addressed: artifacts/{tenant_id}/{job_id}/{artifact_type}/v{version}_{hash[:32]}.json
+    - Artifact-ID-addressed: artifacts/{tenant_id}/{job_id}/{artifact_type}/{artifact_id}/v{version}/content
     """
     try:
         sanitized_type = re.sub(r"[^a-zA-Z0-9_\-]", "_", artifact_type.lower())
-        sanitized_hash = re.sub(r"[^a-f0-9]", "", content_hash.lower())[:32]
-        ver_str = f"v{version}_" if version is not None else ""
-        raw_key = f"artifacts/{tenant_id}/{job_id}/{sanitized_type}/{ver_str}{sanitized_hash}.json"
+        if artifact_id is not None:
+            ver_path = f"v{version}/" if version is not None else ""
+            raw_key = (
+                f"artifacts/{tenant_id}/{job_id}/{sanitized_type}/{artifact_id}/{ver_path}content"
+            )
+        else:
+            ver_str = f"v{version}_" if version is not None else ""
+            sanitized_hash = re.sub(r"[^a-f0-9]", "", (content_hash or "").lower())[:32]
+            raw_key = (
+                f"artifacts/{tenant_id}/{job_id}/{sanitized_type}/{ver_str}{sanitized_hash}.json"
+            )
         return validate_storage_key(raw_key)
     except Exception as exc:
         logger.exception("build_artifact_storage_key failed | %s: %s", type(exc).__name__, exc)

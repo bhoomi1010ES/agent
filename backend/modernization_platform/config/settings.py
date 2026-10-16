@@ -40,7 +40,7 @@ class Settings(BaseSettings):
 
     # Server Networking
     host: str = Field(
-        default="0.0.0.0",
+        default="0.0.0.0",  # nosec B104 - default binding address for containerized microservices
         description="Network interface IP to bind server",
     )
     port: Annotated[int, Field(ge=1, le=65535)] = Field(
@@ -206,6 +206,22 @@ class Settings(BaseSettings):
         default=52_428_800,
         description="Maximum accepted artifact size in bytes (default 50 MiB)",
     )
+    storage_multipart_threshold_bytes: Annotated[int, Field(ge=5_242_880, le=100_000_000)] = Field(
+        default=8_388_608,
+        description="Threshold in bytes above which uploads use multipart streaming (default 8 MiB)",
+    )
+    storage_multipart_chunk_bytes: Annotated[int, Field(ge=5_242_880, le=50_000_000)] = Field(
+        default=5_242_880,
+        description="Part size in bytes for multipart uploads (default 5 MiB, AWS S3 minimum)",
+    )
+    storage_retention_days: Annotated[int, Field(ge=1, le=3650)] = Field(
+        default=90,
+        description="Default retention period in days before non-active artifacts become eligible for cleanup",
+    )
+    storage_retention_protected_job_statuses: list[str] = Field(
+        default_factory=lambda: ["queued", "running", "awaiting_approval", "paused"],
+        description="Job statuses whose artifacts are strictly protected against deletion",
+    )
     storage_timeout_seconds: Annotated[float, Field(gt=0.0, le=300.0)] = Field(
         default=30.0,
         description="Timeout in seconds for object storage operations",
@@ -214,6 +230,141 @@ class Settings(BaseSettings):
         default=3,
         description="Maximum number of retries for transient object storage operations",
     )
+
+    # Git Integration & Source Ingestion Configuration (Sub-Phase 01.6)
+    git_allowed_hosts: list[str] = Field(
+        default_factory=lambda: [
+            "github.com",
+            "gitlab.com",
+            "bitbucket.org",
+            "example.com",
+        ],
+        description="List of permitted Git hostnames for repository cloning",
+    )
+    git_default_timeout_seconds: Annotated[float, Field(gt=0.0, le=600.0)] = Field(
+        default=120.0,
+        description="Timeout in seconds for Git network, clone, and fetch operations",
+    )
+    git_max_repo_size_bytes: Annotated[int, Field(ge=1_024, le=10_000_000_000)] = Field(
+        default=524_288_000,
+        description="Maximum accepted repository size in bytes (default 500 MiB)",
+    )
+    git_max_file_count: Annotated[int, Field(ge=1, le=1_000_000)] = Field(
+        default=50_000,
+        description="Maximum accepted file count in repository (default 50,000 files)",
+    )
+    git_workdir_base: str = Field(
+        default="data/workdir",
+        description="Base filesystem path for isolated job working copies",
+    )
+    git_allow_private_ips_for_testing: bool = Field(
+        default=False,
+        description="Allow loopback/private IPs for Git sources; strictly False in production",
+    )
+
+    # Workflow Orchestration & Durable Checkpoints (Sub-Phase 01.8)
+    workflow_checkpointer_provider: str = Field(
+        default="postgres",
+        description="Checkpointer provider backend: 'postgres' or 'memory'",
+    )
+    workflow_max_iterations: Annotated[int, Field(ge=1, le=1000)] = Field(
+        default=100,
+        description="Maximum graph iterations allowed per execution run",
+    )
+    workflow_worker_poll_interval_seconds: Annotated[float, Field(gt=0.0, le=60.0)] = Field(
+        default=2.0,
+        description="Poll interval in seconds for background workflow worker",
+    )
+    workflow_worker_concurrency: Annotated[int, Field(ge=1, le=100)] = Field(
+        default=5,
+        description="Maximum concurrent workflow jobs executed per worker instance",
+    )
+
+    # Durable Task Execution & Worker Leases (Sub-Phase 01.9)
+    worker_concurrency: Annotated[int, Field(ge=1, le=100)] = Field(
+        default=5,
+        description="Maximum concurrent background tasks executed per worker instance",
+    )
+    task_lease_seconds: Annotated[float, Field(ge=1.0, le=3600.0)] = Field(
+        default=30.0,
+        description="Duration in seconds of a worker task lease before expiry",
+    )
+    task_lease_renewal_seconds: Annotated[float, Field(ge=0.5, le=1800.0)] = Field(
+        default=10.0,
+        description="Interval in seconds at which active task leases are renewed by the owning worker",
+    )
+    task_max_attempts: Annotated[int, Field(ge=1, le=50)] = Field(
+        default=3,
+        description="Maximum allowed task execution attempts before terminal failure",
+    )
+    task_retry_backoff_seconds: Annotated[float, Field(ge=0.1, le=3600.0)] = Field(
+        default=5.0,
+        description="Base exponential retry backoff in seconds for transient task failures",
+    )
+    task_poll_interval_seconds: Annotated[float, Field(ge=0.1, le=60.0)] = Field(
+        default=1.0,
+        description="Interval in seconds for polling new eligible background tasks",
+    )
+    task_shutdown_grace_seconds: Annotated[float, Field(ge=1.0, le=300.0)] = Field(
+        default=15.0,
+        description="Maximum time in seconds to await in-flight task draining during graceful worker shutdown",
+    )
+
+    # Model Gateway, Budgets & Observability (Sub-Phase 01.11)
+    model_gateway_enabled: bool = Field(
+        default=True,
+        description="Whether the provider-neutral model gateway is enabled",
+    )
+    model_default_timeout_seconds: Annotated[float, Field(gt=0.0, le=600.0)] = Field(
+        default=60.0,
+        description="Default execution timeout in seconds for hosted model API requests",
+    )
+    model_max_retries: Annotated[int, Field(ge=0, le=10)] = Field(
+        default=3,
+        description="Maximum retry attempts for transient model API errors",
+    )
+    model_budget_warning_percent: Annotated[int, Field(ge=1, le=100)] = Field(
+        default=80,
+        description="Budget threshold percentage that triggers an idempotent warning event",
+    )
+    model_global_max_cost_cents: Annotated[int, Field(ge=0)] = Field(
+        default=50_000,
+        description="Global maximum cost limit in cents allowed for a single job",
+    )
+    model_openai_api_key: SecretStr | None = Field(
+        default=None,
+        description="Optional API key for OpenAI provider integration",
+    )
+    model_anthropic_api_key: SecretStr | None = Field(
+        default=None,
+        description="Optional API key for Anthropic provider integration",
+    )
+    model_qwen_api_key: SecretStr | None = Field(
+        default=None,
+        description="Optional API key for Qwen / DashScope provider integration",
+    )
+    model_openrouter_api_key: SecretStr | None = Field(
+        default=None,
+        description="Optional API key for OpenRouter provider integration",
+    )
+    otel_enabled: bool = Field(
+        default=False,
+        description="Whether OpenTelemetry tracing and metrics export are activated",
+    )
+    otel_exporter_endpoint: str | None = Field(
+        default=None,
+        description="Optional OpenTelemetry OTLP collector endpoint URL",
+    )
+
+    @property
+    def storage_max_object_bytes(self) -> int:
+        """Alias for storage_max_artifact_size_bytes."""
+        return self.storage_max_artifact_size_bytes
+
+    @property
+    def storage_provider(self) -> str:
+        """Alias for storage_backend."""
+        return self.storage_backend
 
     @property
     def storage_s3_endpoint_masked(self) -> str:
@@ -346,6 +497,11 @@ class Settings(BaseSettings):
                         raise ValueError(
                             f"storage_s3_secret_access_key cannot be blank in '{self.environment}' environment."
                         )
+
+                if self.git_allow_private_ips_for_testing:
+                    raise ValueError(
+                        f"git_allow_private_ips_for_testing must be False in '{self.environment}' environment."
+                    )
 
             return self
         except Exception as exc:

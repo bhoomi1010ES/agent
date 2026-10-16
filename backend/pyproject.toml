@@ -34,6 +34,9 @@ dependencies = [
     "greenlet>=3.1.1",
     "pyjwt[crypto]>=2.10.0",
     "aioboto3>=13.0.0",
+    "langgraph>=1.2.15",
+    "langgraph-checkpoint-postgres>=3.2.0",
+    "psycopg-pool>=3.3.3",
 ]
 
 [project.optional-dependencies]
@@ -98,8 +101,9 @@ ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 minversion = "8.0"
-addopts = "-ra -q --strict-markers"
+addopts = "-ra -q --strict-markers --basetemp=./.pytest_temp"
 testpaths = ["tests"]
+
 pythonpath = ["."]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"

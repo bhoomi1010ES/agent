@@ -1,3 +1,5 @@
-"""External provider and VCS integrations extension boundary (Phase 03, 12)."""
+"""External provider and VCS integrations extension boundary."""
 
-__all__: list[str] = []
+from modernization_platform.integrations import git
+
+__all__: list[str] = ["git"]

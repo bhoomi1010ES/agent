@@ -73,7 +73,7 @@ async def test_create_job_success(app: FastAPI, mock_db_session: AsyncMock) -> N
         assert response.status_code == 201
         data = response.json()
         assert "job_id" in data
-        assert data["status"] == "pending"
+        assert data["status"] in ("pending", "queued")
         assert "created_at" in data
 
         # Verify session operations

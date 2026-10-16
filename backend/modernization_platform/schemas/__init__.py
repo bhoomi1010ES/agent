@@ -14,7 +14,10 @@ from modernization_platform.schemas.agent_artifacts import (
     TargetBlueprint,
 )
 from modernization_platform.schemas.artifacts import (
+    ArtifactDeleteResponse,
     ArtifactDetailResponse,
+    ArtifactIntegrityVerificationResponse,
+    ArtifactLineageResponse,
     ArtifactListResponse,
     ArtifactResponse,
     ArtifactValidationRequest,
@@ -48,10 +51,20 @@ from modernization_platform.schemas.references import (
     CodeReference,
     EvidenceReference,
 )
+from modernization_platform.schemas.source import (
+    ModuleBranchRequest,
+    ModuleBranchResponse,
+    RepositoryMetadataResponse,
+    SourceIngestRequest,
+    SourceProvenanceResponse,
+)
 from modernization_platform.schemas.validation import parse_artifact
 
 __all__ = [
+    "ArtifactDeleteResponse",
     "ArtifactDetailResponse",
+    "ArtifactIntegrityVerificationResponse",
+    "ArtifactLineageResponse",
     "ArtifactListResponse",
     "ArtifactMetadata",
     "ArtifactReference",
@@ -80,12 +93,17 @@ __all__ = [
     "JobStatusResponse",
     "JobSummaryResponse",
     "LegacyModel",
+    "ModuleBranchRequest",
+    "ModuleBranchResponse",
     "PaginationMetadata",
     "PaginationRequest",
     "RepoInventory",
+    "RepositoryMetadataResponse",
     "ReviewAssessment",
     "ReviewReport",
     "SchemaPlan",
+    "SourceIngestRequest",
+    "SourceProvenanceResponse",
     "TargetBlueprint",
     "WaiverRequest",
     "parse_artifact",

@@ -1,5 +1,7 @@
 """Typed exceptions for object storage operations."""
 
+import uuid
+
 from modernization_platform.core.exceptions import ApplicationException
 
 
@@ -24,6 +26,7 @@ class ObjectNotFoundException(StorageException):
         message: str = "The requested storage object was not found.",
         key: str | None = None,
     ) -> None:
+        self.key = key
         details = {"key": key} if key else None
         super().__init__(
             message=message,
@@ -64,6 +67,8 @@ class OversizedArtifactException(StorageException):
         size_bytes: int | None = None,
         max_bytes: int | None = None,
     ) -> None:
+        self.size_bytes = size_bytes
+        self.max_bytes = max_bytes
         details: dict[str, str] = {}
         if size_bytes is not None:
             details["size_bytes"] = str(size_bytes)
@@ -99,6 +104,7 @@ class InvalidStorageKeyException(StorageException):
         message: str = "Invalid storage object key syntax or illegal path traversal detected.",
         key: str | None = None,
     ) -> None:
+        self.key = key
         details = {"key": key} if key else None
         super().__init__(
             message=message,
@@ -167,13 +173,156 @@ class StoragePartialUploadException(StorageException):
         )
 
 
+class StorageAuthenticationException(StorageException):
+    """Raised when storage provider authentication fails (invalid credentials)."""
+
+    def __init__(
+        self,
+        message: str = "Object storage authentication failed. Invalid credentials.",
+    ) -> None:
+        super().__init__(
+            message=message,
+            code="STORAGE_AUTHENTICATION_ERROR",
+            status_code=401,
+        )
+
+
+class ObjectAlreadyExistsException(StorageException):
+    """Raised when attempting to create an object that already exists under immutable policy."""
+
+    def __init__(
+        self,
+        message: str = "Storage object already exists and is immutable.",
+        key: str | None = None,
+    ) -> None:
+        details = {"key": key} if key else None
+        super().__init__(
+            message=message,
+            code="OBJECT_ALREADY_EXISTS",
+            status_code=409,
+            details=details,
+        )
+
+
+class IntegrityVerificationFailedException(StorageException):
+    """Raised when an artifact fails cryptographic integrity verification."""
+
+    def __init__(
+        self,
+        message: str = "Cryptographic integrity verification failed for stored artifact.",
+        expected_hash: str | None = None,
+        actual_hash: str | None = None,
+    ) -> None:
+        details: dict[str, str] = {}
+        if expected_hash:
+            details["expected_hash"] = expected_hash
+        if actual_hash:
+            details["actual_hash"] = actual_hash
+        super().__init__(
+            message=message,
+            code="INTEGRITY_VERIFICATION_FAILED",
+            status_code=422,
+            details=details or None,
+        )
+
+
+class ActiveJobArtifactProtectionException(StorageException):
+    """Raised when deletion of an artifact is blocked because its job is active."""
+
+    def __init__(
+        self,
+        message: str = "Artifact cannot be deleted because its parent job is active.",
+        job_id: str | uuid.UUID | None = None,
+        job_status: str | None = None,
+        artifact_id: str | uuid.UUID | None = None,
+    ) -> None:
+        self.job_id = str(job_id) if job_id is not None else None
+        self.job_status = job_status
+        self.artifact_id = str(artifact_id) if artifact_id is not None else None
+        details: dict[str, str] = {}
+        if self.job_id:
+            details["job_id"] = self.job_id
+        if self.job_status:
+            details["job_status"] = self.job_status
+        if self.artifact_id:
+            details["artifact_id"] = self.artifact_id
+        super().__init__(
+            message=message,
+            code="ACTIVE_JOB_ARTIFACT_PROTECTION",
+            status_code=409,
+            details=details or None,
+        )
+
+
+class ArtifactReferentialIntegrityException(StorageException):
+    """Raised when deletion is blocked because other artifacts depend on this artifact."""
+
+    def __init__(
+        self,
+        message: str = "Artifact cannot be deleted because downstream artifacts depend on it.",
+        artifact_id: str | uuid.UUID | None = None,
+        dependent_ids: list[str] | list[uuid.UUID] | None = None,
+    ) -> None:
+        self.artifact_id = str(artifact_id) if artifact_id is not None else None
+        self.dependent_ids = [str(d) for d in dependent_ids] if dependent_ids else []
+        details: dict[str, str] = {}
+        if self.artifact_id:
+            details["artifact_id"] = self.artifact_id
+        if self.dependent_ids:
+            details["dependent_count"] = str(len(self.dependent_ids))
+        super().__init__(
+            message=message,
+            code="ARTIFACT_REFERENTIAL_INTEGRITY_VIOLATION",
+            status_code=409,
+            details=details or None,
+        )
+
+
+class StorageConfigurationException(StorageException):
+    """Raised when storage configuration is invalid or missing required parameters."""
+
+    def __init__(
+        self,
+        message: str = "Object storage configuration error.",
+    ) -> None:
+        super().__init__(
+            message=message,
+            code="STORAGE_CONFIGURATION_ERROR",
+            status_code=500,
+        )
+
+
+class StorageOperationFailedException(StorageException):
+    """Raised when an unrecoverable object storage operation fails."""
+
+    def __init__(
+        self,
+        message: str = "Object storage operation failed.",
+        operation: str | None = None,
+    ) -> None:
+        details = {"operation": operation} if operation else None
+        super().__init__(
+            message=message,
+            code="STORAGE_OPERATION_FAILED",
+            status_code=500,
+            details=details,
+        )
+
+
 __all__ = [
+    "ActiveJobArtifactProtectionException",
+    "ArtifactReferentialIntegrityException",
     "ChecksumMismatchException",
     "EmptyArtifactException",
+    "IntegrityVerificationFailedException",
     "InvalidStorageKeyException",
+    "ObjectAlreadyExistsException",
     "ObjectNotFoundException",
     "OversizedArtifactException",
+    "StorageAuthenticationException",
+    "StorageConfigurationException",
     "StorageException",
+    "StorageOperationFailedException",
     "StoragePartialUploadException",
     "StoragePermissionException",
     "StorageTimeoutException",
