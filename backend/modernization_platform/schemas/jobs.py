@@ -1,6 +1,7 @@
 """Typed job request, response, status, budget, and pagination contracts."""
 
 import uuid
+from typing import Any
 
 from pydantic import AwareDatetime, Field, HttpUrl, model_validator
 
@@ -71,3 +72,53 @@ class PaginationMetadata(TransportResponse):
         if self.offset > self.total and self.total != 0:
             raise ValueError("offset cannot exceed total for a non-empty result")
         return self
+
+
+class JobSummaryResponse(TransportResponse):
+    """Summary of a modernization job for list views."""
+
+    job_id: uuid.UUID
+    tenant_id: uuid.UUID
+    owner_user_id: uuid.UUID
+    status: JobStatus
+    source_ref: str
+    target_stack_spec: dict[str, Any]
+    budget: dict[str, Any]
+    created_at: AwareDatetime
+    updated_at: AwareDatetime
+    finished_at: AwareDatetime | None = None
+
+
+class JobListResponse(TransportResponse):
+    """Bounded, paginated collection of modernization jobs."""
+
+    items: list[JobSummaryResponse]
+    pagination: PaginationMetadata
+
+
+class JobDetailResponse(TransportResponse):
+    """Detailed view of a modernization job including configuration and lifecycle."""
+
+    job_id: uuid.UUID
+    tenant_id: uuid.UUID
+    owner_user_id: uuid.UUID
+    status: JobStatus
+    source_ref: str
+    target_stack_spec: dict[str, Any]
+    budget: dict[str, Any]
+    created_at: AwareDatetime
+    updated_at: AwareDatetime
+    finished_at: AwareDatetime | None = None
+
+
+__all__ = [
+    "JobBudget",
+    "JobCreateRequest",
+    "JobCreateResponse",
+    "JobDetailResponse",
+    "JobListResponse",
+    "JobStatusResponse",
+    "JobSummaryResponse",
+    "PaginationMetadata",
+    "PaginationRequest",
+]

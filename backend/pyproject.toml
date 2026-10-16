@@ -33,6 +33,7 @@ dependencies = [
     "psycopg[binary]>=3.2.0",
     "greenlet>=3.1.1",
     "pyjwt[crypto]>=2.10.0",
+    "aioboto3>=13.0.0",
 ]
 
 [project.optional-dependencies]
@@ -52,6 +53,7 @@ packages = ["modernization_platform"]
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+extend-exclude = ["*.md"]
 
 [tool.ruff.lint]
 select = [
@@ -86,6 +88,13 @@ warn_redundant_casts = true
 warn_unused_ignores = true
 warn_no_return = true
 mypy_path = "."
+
+[[tool.mypy.overrides]]
+module = [
+    "aioboto3",
+    "botocore.*",
+]
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 minversion = "8.0"

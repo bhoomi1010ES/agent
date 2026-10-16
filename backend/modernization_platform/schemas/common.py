@@ -9,7 +9,7 @@ from modernization_platform.schemas.base import ContractModel, ShortText
 
 
 class ArtifactType(StrEnum):
-    """The nine artifact handoff types defined by the platform TDD."""
+    """The canonical artifact handoff types defined by the platform TDD."""
 
     REPO_INVENTORY = "RepoInventory"
     LEGACY_MODEL = "LegacyModel"
@@ -18,7 +18,9 @@ class ArtifactType(StrEnum):
     CONVERSION_PLAN = "ConversionPlan"
     CHARACTERIZATION_SUITE = "CharacterizationSuite"
     SCHEMA_PLAN = "SchemaPlan"
+    CHANGE_SET = "ChangeSet"
     EQUIVALENCE_REPORT = "EquivalenceReport"
+    REVIEW_REPORT = "ReviewReport"
     JOB_REPORT = "JobReport"
 
 

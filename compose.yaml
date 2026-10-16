@@ -7,7 +7,7 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      - ./backend/src:/workspace/src:ro
+      - ./backend/modernization_platform:/workspace/modernization_platform:ro
       - ./backend/tests:/workspace/tests:ro
     env_file:
       - ./backend/.env.example

@@ -103,6 +103,83 @@ class ArtifactRepository(BaseRepository[Artifact]):
         except Exception as exc:
             raise self._translate_error("get_by_id_scoped", exc) from exc
 
+    async def list_artifacts_scoped(
+        self,
+        *,
+        job_id: uuid.UUID,
+        tenant_id: uuid.UUID,
+        user_id: uuid.UUID,
+        membership_id: uuid.UUID,
+        tenant_admin: bool = False,
+        artifact_type: str | None = None,
+    ) -> list[Artifact]:
+        """List artifacts for a job within authorized tenant and membership scope."""
+        try:
+            statement = (
+                select(Artifact)
+                .join(Job, Job.id == Artifact.job_id)
+                .where(Artifact.job_id == job_id, Job.tenant_id == tenant_id)
+            )
+            if not tenant_admin:
+                member_access = (
+                    select(JobMember.id)
+                    .where(
+                        JobMember.job_id == Job.id,
+                        JobMember.membership_id == membership_id,
+                    )
+                    .exists()
+                )
+                statement = statement.where((Job.owner_user_id == user_id) | member_access)
+            if artifact_type is not None:
+                statement = statement.where(Artifact.type == artifact_type)
+            statement = statement.order_by(Artifact.type, Artifact.version.asc(), Artifact.id.asc())
+            result = await self.session.execute(statement)
+            return list(result.scalars().all())
+        except Exception as exc:
+            raise self._translate_error("list_artifacts_scoped", exc) from exc
+
+    async def get_by_job_and_type_scoped(
+        self,
+        *,
+        job_id: uuid.UUID,
+        artifact_type: str,
+        version: int | None = None,
+        tenant_id: uuid.UUID,
+        user_id: uuid.UUID,
+        membership_id: uuid.UUID,
+        tenant_admin: bool = False,
+    ) -> Artifact | None:
+        """Retrieve an artifact by job and type (and optional version) within authorized scope."""
+        try:
+            statement = (
+                select(Artifact)
+                .join(Job, Job.id == Artifact.job_id)
+                .where(
+                    Artifact.job_id == job_id,
+                    Artifact.type == artifact_type,
+                    Job.tenant_id == tenant_id,
+                )
+            )
+            if not tenant_admin:
+                member_access = (
+                    select(JobMember.id)
+                    .where(
+                        JobMember.job_id == Job.id,
+                        JobMember.membership_id == membership_id,
+                    )
+                    .exists()
+                )
+                statement = statement.where((Job.owner_user_id == user_id) | member_access)
+            if version is not None:
+                statement = statement.where(Artifact.version == version)
+            else:
+                statement = statement.order_by(Artifact.version.desc())
+            statement = statement.limit(1)
+            result = await self.session.execute(statement)
+            return result.scalar_one_or_none()
+        except Exception as exc:
+            raise self._translate_error("get_by_job_and_type_scoped", exc) from exc
+
     async def _get_by_ids_unscoped(self, artifact_ids: list[uuid.UUID]) -> list[Artifact]:
         """Retrieve artifact rows used to validate lineage ownership."""
         try:

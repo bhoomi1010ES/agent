@@ -173,6 +173,68 @@ class Settings(BaseSettings):
         )
     )
 
+    # Object Storage Configuration (S3 / MinIO)
+    storage_backend: Literal["s3", "memory"] = Field(
+        default="s3",
+        description="Object storage backend type ('s3' for AWS S3 / MinIO, 'memory' for testing)",
+    )
+    storage_s3_endpoint_url: str | None = Field(
+        default=None,
+        description="Custom endpoint URL for S3/MinIO (e.g. http://localhost:9000)",
+    )
+    storage_s3_bucket: str = Field(
+        default="modernization-artifacts",
+        description="Target S3/MinIO bucket for artifact storage",
+    )
+    storage_s3_region: str = Field(
+        default="us-east-1",
+        description="AWS region or MinIO region",
+    )
+    storage_s3_access_key_id: SecretStr | None = Field(
+        default=None,
+        description="S3/MinIO access key ID",
+    )
+    storage_s3_secret_access_key: SecretStr | None = Field(
+        default=None,
+        description="S3/MinIO secret access key",
+    )
+    storage_s3_use_ssl: bool = Field(
+        default=False,
+        description="Whether to use TLS/SSL when connecting to S3/MinIO",
+    )
+    storage_max_artifact_size_bytes: Annotated[int, Field(ge=1_024, le=500_000_000)] = Field(
+        default=52_428_800,
+        description="Maximum accepted artifact size in bytes (default 50 MiB)",
+    )
+    storage_timeout_seconds: Annotated[float, Field(gt=0.0, le=300.0)] = Field(
+        default=30.0,
+        description="Timeout in seconds for object storage operations",
+    )
+    storage_max_retries: Annotated[int, Field(ge=0, le=10)] = Field(
+        default=3,
+        description="Maximum number of retries for transient object storage operations",
+    )
+
+    @property
+    def storage_s3_endpoint_masked(self) -> str:
+        """Return S3 endpoint with credentials safely masked for diagnostic logging."""
+        try:
+            if not self.storage_s3_endpoint_url:
+                return f"https://s3.{self.storage_s3_region}.amazonaws.com"
+            from urllib.parse import urlsplit, urlunsplit
+
+            parsed = urlsplit(self.storage_s3_endpoint_url)
+            if parsed.password:
+                netloc = f"{parsed.username or ''}:***@{parsed.hostname or ''}"
+                if parsed.port:
+                    netloc = f"{netloc}:{parsed.port}"
+                return urlunsplit(
+                    (parsed.scheme, netloc, parsed.path, parsed.query, parsed.fragment)
+                )
+            return self.storage_s3_endpoint_url
+        except Exception:
+            return "http://***@masked-endpoint"
+
     @property
     def database_url_masked(self) -> str:
         """Return database URL with credentials safely masked for diagnostic logging."""
@@ -264,6 +326,26 @@ class Settings(BaseSettings):
                     raise ValueError(
                         "JWT issuer, audience, and verification key are required in staging and production."
                     )
+
+                if self.storage_backend == "s3":
+                    if not (self.storage_s3_bucket and self.storage_s3_bucket.strip()):
+                        raise ValueError(
+                            f"storage_s3_bucket is required in '{self.environment}' environment."
+                        )
+                    if (
+                        self.storage_s3_access_key_id is not None
+                        and not self.storage_s3_access_key_id.get_secret_value().strip()
+                    ):
+                        raise ValueError(
+                            f"storage_s3_access_key_id cannot be blank in '{self.environment}' environment."
+                        )
+                    if (
+                        self.storage_s3_secret_access_key is not None
+                        and not self.storage_s3_secret_access_key.get_secret_value().strip()
+                    ):
+                        raise ValueError(
+                            f"storage_s3_secret_access_key cannot be blank in '{self.environment}' environment."
+                        )
 
             return self
         except Exception as exc:

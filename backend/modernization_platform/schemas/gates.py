@@ -1,6 +1,7 @@
 """Gate decision transport contracts that keep actor identity server-assigned."""
 
 import uuid
+from typing import Any
 
 from pydantic import AwareDatetime, Field, model_validator
 
@@ -38,3 +39,24 @@ class GateDecisionResponse(TransportResponse):
     decision_id: uuid.UUID
     decision: GateDecisionValue
     decided_at: AwareDatetime
+
+
+class GateDetailResponse(TransportResponse):
+    """Human approval gate status and presented review context."""
+
+    gate_id: uuid.UUID
+    job_id: uuid.UUID
+    gate_type: str
+    state: str
+    requested_at: AwareDatetime
+    artifact_versions_shown: dict[str, Any] = Field(default_factory=dict)
+    needs_human_flags: list[dict[str, Any]] = Field(default_factory=list)
+    budget_used_cents: float = 0.0
+    resolved_at: AwareDatetime | None = None
+
+
+class GateListResponse(TransportResponse):
+    """List of gates associated with an authorized job."""
+
+    items: list[GateDetailResponse]
+    total: int

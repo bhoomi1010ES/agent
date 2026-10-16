@@ -4,10 +4,12 @@ import logging
 import uuid
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from modernization_platform.db.models.audit_event import AuditEvent
+from modernization_platform.db.models.identity import JobMember
+from modernization_platform.db.models.job import Job
 from modernization_platform.repositories.base import BaseRepository
 
 logger = logging.getLogger(__name__)
@@ -76,6 +78,75 @@ class AuditEventRepository(BaseRepository[AuditEvent]):
             return list(result.scalars().all())
         except Exception as exc:
             raise self._translate_error("list_events_by_job", exc) from exc
+
+    async def list_events_by_job_scoped(
+        self,
+        *,
+        job_id: uuid.UUID,
+        tenant_id: uuid.UUID,
+        user_id: uuid.UUID,
+        membership_id: uuid.UUID,
+        tenant_admin: bool = False,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[AuditEvent]:
+        """List audit events for a job within authorized tenant and membership scope."""
+        try:
+            statement = (
+                select(AuditEvent)
+                .join(Job, Job.id == AuditEvent.job_id)
+                .where(AuditEvent.job_id == job_id, Job.tenant_id == tenant_id)
+            )
+            if not tenant_admin:
+                member_access = (
+                    select(JobMember.id)
+                    .where(
+                        JobMember.job_id == Job.id,
+                        JobMember.membership_id == membership_id,
+                    )
+                    .exists()
+                )
+                statement = statement.where((Job.owner_user_id == user_id) | member_access)
+            statement = (
+                statement.order_by(AuditEvent.event_time.asc(), AuditEvent.id.asc())
+                .limit(min(limit, 200))
+                .offset(max(offset, 0))
+            )
+            result = await self.session.execute(statement)
+            return list(result.scalars().all())
+        except Exception as exc:
+            raise self._translate_error("list_events_by_job_scoped", exc) from exc
+
+    async def count_events_by_job_scoped(
+        self,
+        *,
+        job_id: uuid.UUID,
+        tenant_id: uuid.UUID,
+        user_id: uuid.UUID,
+        membership_id: uuid.UUID,
+        tenant_admin: bool = False,
+    ) -> int:
+        """Count audit events for a job within authorized tenant and membership scope."""
+        try:
+            statement = (
+                select(func.count(AuditEvent.id))
+                .join(Job, Job.id == AuditEvent.job_id)
+                .where(AuditEvent.job_id == job_id, Job.tenant_id == tenant_id)
+            )
+            if not tenant_admin:
+                member_access = (
+                    select(JobMember.id)
+                    .where(
+                        JobMember.job_id == Job.id,
+                        JobMember.membership_id == membership_id,
+                    )
+                    .exists()
+                )
+                statement = statement.where((Job.owner_user_id == user_id) | member_access)
+            result = await self.session.execute(statement)
+            return int(result.scalar() or 0)
+        except Exception as exc:
+            raise self._translate_error("count_events_by_job_scoped", exc) from exc
 
     async def list_events(
         self,

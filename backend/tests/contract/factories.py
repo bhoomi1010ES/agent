@@ -249,6 +249,67 @@ def equivalence_report_payload() -> dict[str, Any]:
     }
 
 
+def change_set_payload() -> dict[str, Any]:
+    """Build a representative ChangeSet payload."""
+    return {
+        **_base(ArtifactType.CHANGE_SET),
+        "module_id": "auth-service",
+        "branch": "job/job-123/auth-service",
+        "allowed_directories": ["src/auth", "tests/auth"],
+        "files": [
+            {
+                "path": "src/auth/jwt.py",
+                "action": "create",
+                "content": "def verify_token(): pass\n",
+                "old_path": None,
+                "content_hash": HASH_A,
+            },
+            {
+                "path": "tests/auth/test_jwt.py",
+                "action": "create",
+                "content": "def test_verify(): pass\n",
+                "old_path": None,
+                "content_hash": HASH_B,
+            },
+        ],
+        "assumptions": ["Python 3.12 target runtime"],
+        "open_questions": [],
+        "base_commit": "c0ffee123",
+    }
+
+
+def review_report_payload() -> dict[str, Any]:
+    """Build a representative ReviewReport payload."""
+    return {
+        **_base(ArtifactType.REVIEW_REPORT),
+        "status": "passed",
+        "module_id": "auth-service",
+        "findings": [
+            {
+                "finding_id": "find-1",
+                "category": "style",
+                "severity": "low",
+                "title": "Unused import in auth module",
+                "description": "Import os is declared but unused",
+                "evidence": [code_reference()],
+                "rule_id": "F401",
+            }
+        ],
+        "fix_tasks": [
+            {
+                "task_id": "task-1",
+                "finding_ids": ["find-1"],
+                "title": "Remove unused import",
+                "description": "Delete unused import os from header",
+                "priority": "low",
+                "suggested_change": "Remove unused import line",
+                "automated_fix_available": True,
+            }
+        ],
+        "uncovered_risks": [],
+    }
+
+
 def job_report_payload() -> dict[str, Any]:
     """Build a representative successful JobReport payload."""
     return {
@@ -285,6 +346,8 @@ ARTIFACT_PAYLOADS = {
     ArtifactType.CONVERSION_PLAN: conversion_plan_payload,
     ArtifactType.CHARACTERIZATION_SUITE: characterization_suite_payload,
     ArtifactType.SCHEMA_PLAN: schema_plan_payload,
+    ArtifactType.CHANGE_SET: change_set_payload,
     ArtifactType.EQUIVALENCE_REPORT: equivalence_report_payload,
+    ArtifactType.REVIEW_REPORT: review_report_payload,
     ArtifactType.JOB_REPORT: job_report_payload,
 }

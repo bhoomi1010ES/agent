@@ -2,6 +2,7 @@
 
 import logging
 import uuid
+from datetime import UTC, datetime
 from typing import Any
 
 from pydantic import Field, model_validator
@@ -31,6 +32,7 @@ from modernization_platform.security.principals import (
     WorkerAuthorizationContext,
 )
 from modernization_platform.services.authorization import AuthorizationService
+from modernization_platform.storage.service import ArtifactStorageService
 
 logger = logging.getLogger(__name__)
 
@@ -60,11 +62,137 @@ class ArtifactPersistenceService:
     Producer metadata is provenance only and is never treated as authorization.
     """
 
-    def __init__(self, session: AsyncSession) -> None:
+    def __init__(
+        self,
+        session: AsyncSession,
+        storage: ArtifactStorageService | None = None,
+    ) -> None:
         self._artifacts = ArtifactRepository(session)
         self._runs = AgentRunRepository(session)
         self._audit = AuditEventRepository(session)
         self._authorization = AuthorizationService(session)
+        self._storage = storage or ArtifactStorageService()
+
+    @log_errors
+    async def store_and_persist(
+        self,
+        *,
+        authorization_context: AuthenticatedPrincipal | WorkerAuthorizationContext,
+        tenant_id: uuid.UUID,
+        job_id: uuid.UUID,
+        expected_type: ArtifactType,
+        expected_schema_version: str,
+        payload: dict[str, Any] | str | bytes,
+        producer: ProducerIdentity,
+        parent_artifact_ids: list[uuid.UUID] | None = None,
+        producer_execution_id: uuid.UUID | None = None,
+        model_prompt: ModelPromptProvenance | None = None,
+        claimed_content_hash: str | None = None,
+        correlation_id: str | None = None,
+    ) -> ArtifactPersistenceResult:
+        """Store validated payload in object storage, stage DB row, and compensate on failure."""
+        parents = parent_artifact_ids or []
+        actor_user_id: uuid.UUID | None = None
+        storage_ref: str | None = None
+        try:
+            actor_user_id = await self._authorize(
+                authorization_context=authorization_context,
+                job_id=job_id,
+            )
+            validated = parse_artifact(
+                payload,
+                expected_type=expected_type,
+                expected_schema_version=expected_schema_version,
+            )
+            self._validate_claimed_hash(claimed_content_hash, validated.content_hash)
+            await self._validate_lineage(job_id, parents)
+            await self._validate_producer(job_id, producer, producer_execution_id, model_prompt)
+
+            # Store in object storage first
+            storage_ref, actual_hash, _meta = await self._storage.store_artifact(
+                tenant_id=tenant_id,
+                job_id=job_id,
+                artifact_type=expected_type.value,
+                payload=validated.canonical_payload,
+                schema_version=expected_schema_version,
+            )
+
+            # Stage in database
+            try:
+                artifact_id = uuid.uuid4()
+                artifact_row = await self._artifacts._append_artifact_after_authorization(
+                    job_id=job_id,
+                    artifact_type=expected_type.value,
+                    content_hash=actual_hash,
+                    storage_ref=storage_ref,
+                    derived_from=[str(parent_id) for parent_id in parents],
+                    artifact_metadata=self._metadata_payload(
+                        expected_schema_version, producer, model_prompt
+                    ),
+                    produced_by_run_id=producer_execution_id,
+                    artifact_id=artifact_id,
+                )
+            except Exception as db_exc:
+                # Compensating transaction: remove object from storage so no orphaned object remains
+                logger.warning(
+                    "Database staging failed for job_id=%s; deleting stored object storage_ref=%s",
+                    job_id,
+                    storage_ref,
+                )
+                try:
+                    await self._storage.delete_artifact(storage_ref=storage_ref)
+                except Exception as cleanup_exc:
+                    logger.error(
+                        "Compensating deletion failed for storage_ref=%s: %s",
+                        storage_ref,
+                        cleanup_exc,
+                    )
+                raise db_exc
+
+            metadata = ArtifactMetadata(
+                artifact_id=artifact_row.id,
+                artifact_type=expected_type,
+                schema_version=expected_schema_version,
+                business_version=artifact_row.version,
+                content_hash=artifact_row.content_hash,
+                storage_ref=artifact_row.storage_ref,
+                producer=producer,
+                parent_artifact_ids=parents,
+                created_at=artifact_row.created_at or datetime.now(UTC),
+                job_id=job_id,
+                producer_execution_id=producer_execution_id,
+                model_prompt=model_prompt,
+            )
+            await self._audit.append_event(
+                actor=str(actor_user_id),
+                actor_user_id=actor_user_id,
+                action="ARTIFACT_STORED_AND_STAGED",
+                job_id=job_id,
+                correlation_id=correlation_id,
+                payload={
+                    "artifact_id": str(artifact_row.id),
+                    "artifact_type": expected_type.value,
+                    "schema_version": expected_schema_version,
+                    "content_hash": validated.content_hash,
+                    "storage_ref": storage_ref,
+                },
+            )
+            return ArtifactPersistenceResult(persisted=True, metadata=metadata)
+        except ArtifactValidationError as exc:
+            if actor_user_id is not None:
+                await self._record_rejection(
+                    job_id=job_id,
+                    actor_user_id=actor_user_id,
+                    artifact_type=expected_type,
+                    schema_version=expected_schema_version,
+                    error=exc,
+                    correlation_id=correlation_id,
+                )
+            return ArtifactPersistenceResult(
+                persisted=False,
+                error_code=exc.code,
+                issues=exc.issues,
+            )
 
     @log_errors
     async def persist(

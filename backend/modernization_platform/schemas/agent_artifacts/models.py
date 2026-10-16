@@ -1,5 +1,6 @@
-"""Version 1.0.0 contracts for the nine TDD-defined agent artifacts."""
+"""Version 1.0.0 contracts for the TDD-defined agent artifacts."""
 
+import re
 import uuid
 from enum import StrEnum
 from typing import Final, Literal
@@ -385,6 +386,94 @@ class SchemaPlan(AgentArtifact):
     risks: list[DataRisk] = Field(default_factory=list, max_length=1_000)
 
 
+class FileChangeAction(StrEnum):
+    """Permitted file mutation actions within a module branch."""
+
+    CREATE = "create"
+    MODIFY = "modify"
+    DELETE = "delete"
+
+
+class FileChange(ContractModel):
+    """One planned or applied file mutation on the module branch."""
+
+    path: str
+    action: FileChangeAction
+    content: str | None = Field(default=None, max_length=10_000_000)
+    old_path: str | None = None
+    content_hash: Sha256Digest | None = None
+
+    @field_validator("path")
+    @classmethod
+    @log_errors
+    def validate_file_path(cls, value: str) -> str:
+        return validate_repository_path(value)
+
+    @field_validator("old_path")
+    @classmethod
+    @log_errors
+    def validate_old_file_path(cls, value: str | None) -> str | None:
+        if value is not None:
+            return validate_repository_path(value)
+        return None
+
+    @model_validator(mode="after")
+    @log_errors
+    def validate_action_content(self) -> "FileChange":
+        if self.action in {FileChangeAction.CREATE, FileChangeAction.MODIFY}:
+            if self.content is None:
+                raise ValueError(f"file content is required for action '{self.action.value}'")
+        elif self.action is FileChangeAction.DELETE and self.content is not None:
+            raise ValueError("deleted file cannot specify new content")
+        return self
+
+
+class ChangeSet(AgentArtifact):
+    """Pydantic-validated file changes, assumptions, and constraints produced by CodeWriter."""
+
+    artifact_type: Literal[ArtifactType.CHANGE_SET] = ArtifactType.CHANGE_SET
+    module_id: Identifier
+    branch: Identifier
+    allowed_directories: list[str] = Field(min_length=1, max_length=500)
+    files: list[FileChange] = Field(min_length=1, max_length=2_000)
+    assumptions: list[ShortText] = Field(default_factory=list, max_length=500)
+    open_questions: list[ShortText] = Field(default_factory=list, max_length=500)
+    base_commit: Identifier | None = None
+
+    @field_validator("allowed_directories")
+    @classmethod
+    @log_errors
+    def validate_allowed_dirs(cls, values: list[str]) -> list[str]:
+        return [validate_repository_path(v) for v in values]
+
+    @model_validator(mode="after")
+    @log_errors
+    def validate_changeset_boundaries(self) -> "ChangeSet":
+        paths = [f.path for f in self.files]
+        if len(paths) != len(set(paths)):
+            raise ValueError("file paths in change set must be unique")
+
+        for file_change in self.files:
+            file_path = file_change.path
+            in_scope = False
+            for allowed_dir in self.allowed_directories:
+                prefix = allowed_dir.rstrip("/") + "/"
+                if file_path == allowed_dir or file_path.startswith(prefix):
+                    in_scope = True
+                    break
+            if not in_scope:
+                raise ValueError(
+                    f"file path '{file_path}' is outside the module's allowed directories"
+                )
+
+        if not re.match(r"^job/[a-zA-Z0-9_\-\.]+/[a-zA-Z0-9_\-\.]+$", self.branch):
+            raise ValueError(
+                f"branch '{self.branch}' must match the required pattern 'job/<job_id>/<module_id>'"
+            )
+
+        return self
+
+
 class ComparisonOutcomeStatus(StrEnum):
     """Observed comparison result before any human waiver."""
 
@@ -454,6 +543,92 @@ class EquivalenceReport(AgentArtifact):
         return self
 
 
+class FindingCategory(StrEnum):
+    """Categorization of static review findings."""
+
+    SECURITY = "security"
+    ARCHITECTURE = "architecture"
+    STYLE = "style"
+    LICENSING = "licensing"
+    VULNERABILITY = "vulnerability"
+
+
+class ReviewStatus(StrEnum):
+    """Aggregate static review outcome."""
+
+    PASSED = "passed"
+    CHANGES_REQUESTED = "changes_requested"
+    BLOCKED = "blocked"
+
+
+class ReviewFinding(ContractModel):
+    """One security, style, architectural, or dependency finding from the Reviewer."""
+
+    finding_id: Identifier
+    category: FindingCategory
+    severity: RiskLevel
+    title: ShortText
+    description: LongText
+    evidence: list[CodeReference] = Field(default_factory=list, max_length=500)
+    rule_id: Identifier | None = None
+
+
+class ProposedFixTask(ContractModel):
+    """Actionable repair task proposed by the Reviewer to address one or more findings."""
+
+    task_id: Identifier
+    finding_ids: list[Identifier] = Field(min_length=1, max_length=100)
+    title: ShortText
+    description: LongText
+    priority: RiskLevel
+    suggested_change: ShortText | None = None
+    automated_fix_available: bool = False
+
+
+class ReviewReport(AgentArtifact):
+    """Static review findings and proposed repair tasks produced by Reviewer."""
+
+    artifact_type: Literal[ArtifactType.REVIEW_REPORT] = ArtifactType.REVIEW_REPORT
+    status: ReviewStatus
+    module_id: Identifier | None = None
+    findings: list[ReviewFinding] = Field(default_factory=list, max_length=5_000)
+    fix_tasks: list[ProposedFixTask] = Field(default_factory=list, max_length=1_000)
+    uncovered_risks: list[ShortText] = Field(default_factory=list, max_length=500)
+
+    @model_validator(mode="after")
+    @log_errors
+    def validate_review_invariants(self) -> "ReviewReport":
+        finding_ids = [f.finding_id for f in self.findings]
+        if len(finding_ids) != len(set(finding_ids)):
+            raise ValueError("finding_id values must be unique")
+        known_findings = set(finding_ids)
+
+        task_ids = [t.task_id for t in self.fix_tasks]
+        if len(task_ids) != len(set(task_ids)):
+            raise ValueError("task_id values must be unique")
+
+        for task in self.fix_tasks:
+            if not set(task.finding_ids).issubset(known_findings):
+                raise ValueError("fix tasks must reference declared finding_ids")
+
+        has_severe_finding = any(
+            f.severity in {RiskLevel.HIGH, RiskLevel.CRITICAL} for f in self.findings
+        )
+        if has_severe_finding and self.status is ReviewStatus.PASSED:
+            raise ValueError("review report with high or critical findings cannot pass")
+
+        if (
+            self.status in {ReviewStatus.CHANGES_REQUESTED, ReviewStatus.BLOCKED}
+            and not self.fix_tasks
+            and not self.assessment.needs_human
+        ):
+            raise ValueError(
+                "non-passing review requires proposed fix tasks or explicit human review"
+            )
+
+        return self
+
+
 class GateResolution(StrEnum):
     """Observed state of a required gate at report generation time."""
 
@@ -520,6 +695,31 @@ ArtifactContract = (
     | ConversionPlan
     | CharacterizationSuite
     | SchemaPlan
+    | ChangeSet
     | EquivalenceReport
+    | ReviewReport
     | JobReport
 )
+
+__all__ = [
+    "CURRENT_ARTIFACT_SCHEMA_VERSION",
+    "AgentArtifact",
+    "ArtifactContract",
+    "ChangeSet",
+    "CharacterizationSuite",
+    "ConversionPlan",
+    "EquivalenceReport",
+    "FeasibilityReport",
+    "FileChange",
+    "FileChangeAction",
+    "FindingCategory",
+    "JobReport",
+    "LegacyModel",
+    "ProposedFixTask",
+    "RepoInventory",
+    "ReviewFinding",
+    "ReviewReport",
+    "ReviewStatus",
+    "SchemaPlan",
+    "TargetBlueprint",
+]

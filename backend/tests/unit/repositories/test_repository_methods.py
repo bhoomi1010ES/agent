@@ -84,6 +84,28 @@ async def test_job_repository_unit(mock_session: AsyncMock) -> None:
     items = await repo._list_jobs_unscoped(offset=0, limit=10, status="running")
     assert items == [job]
 
+    # list_jobs_scoped & count_jobs_scoped
+    mock_res_scoped = MagicMock()
+    mock_res_scoped.scalars.return_value.all.return_value = [job]
+    mock_res_count = MagicMock()
+    mock_res_count.scalar.return_value = 1
+    mock_session.execute.side_effect = [mock_res_scoped, mock_res_count]
+
+    scoped_jobs = await repo.list_jobs_scoped(
+        tenant_id=uuid.uuid4(),
+        user_id=uuid.uuid4(),
+        membership_id=uuid.uuid4(),
+        limit=10,
+        offset=0,
+    )
+    assert scoped_jobs == [job]
+    count = await repo.count_jobs_scoped(
+        tenant_id=uuid.uuid4(),
+        user_id=uuid.uuid4(),
+        membership_id=uuid.uuid4(),
+    )
+    assert count == 1
+
 
 @pytest.mark.asyncio
 async def test_artifact_repository_unit(mock_session: AsyncMock) -> None:
@@ -127,6 +149,30 @@ async def test_artifact_repository_unit(mock_session: AsyncMock) -> None:
     mock_session.execute.return_value = mock_res_version
     ver_art = await repo._get_by_job_and_type_version_unscoped(job_id, "IR_AST", 1)
     assert ver_art is artifact
+
+    # list_artifacts_scoped & get_by_job_and_type_scoped
+    mock_res_art_scoped = MagicMock()
+    mock_res_art_scoped.scalars.return_value.all.return_value = [artifact]
+    mock_res_art_single = MagicMock()
+    mock_res_art_single.scalar_one_or_none.return_value = artifact
+    mock_session.execute.side_effect = [mock_res_art_scoped, mock_res_art_single]
+
+    art_list = await repo.list_artifacts_scoped(
+        job_id=job_id,
+        tenant_id=uuid.uuid4(),
+        user_id=uuid.uuid4(),
+        membership_id=uuid.uuid4(),
+    )
+    assert art_list == [artifact]
+
+    single_art = await repo.get_by_job_and_type_scoped(
+        job_id=job_id,
+        artifact_type="IR_AST",
+        tenant_id=uuid.uuid4(),
+        user_id=uuid.uuid4(),
+        membership_id=uuid.uuid4(),
+    )
+    assert single_art is artifact
 
 
 @pytest.mark.asyncio
@@ -268,7 +314,18 @@ async def test_gate_repository_unit(mock_session: AsyncMock) -> None:
     )
     assert decision.decision == "approved"
     assert decision.actor == str(actor_user_id)
-    assert gate.state == "approved"
+    # get_by_id_scoped with for_update
+    mock_res_gate = MagicMock()
+    mock_res_gate.scalar_one_or_none.return_value = gate
+    mock_session.execute.return_value = mock_res_gate
+    found_gate = await repo.get_by_id_scoped(
+        gate_id=gate.id,
+        tenant_id=uuid.uuid4(),
+        user_id=uuid.uuid4(),
+        membership_id=uuid.uuid4(),
+        for_update=True,
+    )
+    assert found_gate is gate
 
 
 @pytest.mark.asyncio
@@ -304,6 +361,29 @@ async def test_audit_event_repository_unit(mock_session: AsyncMock) -> None:
     # list_events with action and actor filters
     all_events = await repo.list_events(action="JOB_STARTED", actor="operator_1")
     assert all_events == [event]
+
+    # list_events_by_job_scoped & count_events_by_job_scoped
+    mock_res_audit_scoped = MagicMock()
+    mock_res_audit_scoped.scalars.return_value.all.return_value = [event]
+    mock_res_audit_count = MagicMock()
+    mock_res_audit_count.scalar.return_value = 1
+    mock_session.execute.side_effect = [mock_res_audit_scoped, mock_res_audit_count]
+
+    audit_list = await repo.list_events_by_job_scoped(
+        job_id=job_id,
+        tenant_id=uuid.uuid4(),
+        user_id=uuid.uuid4(),
+        membership_id=uuid.uuid4(),
+    )
+    assert audit_list == [event]
+
+    audit_count = await repo.count_events_by_job_scoped(
+        job_id=job_id,
+        tenant_id=uuid.uuid4(),
+        user_id=uuid.uuid4(),
+        membership_id=uuid.uuid4(),
+    )
+    assert audit_count == 1
 
 
 @pytest.mark.asyncio

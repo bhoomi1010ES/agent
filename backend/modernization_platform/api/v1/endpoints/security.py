@@ -8,36 +8,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from modernization_platform.db.session import get_db_session
 from modernization_platform.schemas.gates import GateDecisionRequest, GateDecisionResponse
-from modernization_platform.schemas.security import (
-    SecuredArtifactResponse,
-    SecuredJobResponse,
-)
-from modernization_platform.schemas.status import JobStatus
+from modernization_platform.schemas.security import SecuredArtifactResponse
 from modernization_platform.security.dependencies import CurrentPrincipal
 from modernization_platform.services.authorization import AuthorizationService
 
 router = APIRouter()
-
-
-@router.get("/jobs/{job_id}", response_model=SecuredJobResponse)
-async def get_job(
-    job_id: uuid.UUID,
-    principal: CurrentPrincipal,
-    session: Annotated[AsyncSession, Depends(get_db_session)],
-) -> SecuredJobResponse:
-    """Return a job only when tenant and job membership authorize access."""
-    try:
-        job = await AuthorizationService(session).get_job(principal, job_id)
-        if job.tenant_id is None or job.owner_user_id is None:
-            raise RuntimeError("Secured job is missing its authorization scope")
-        return SecuredJobResponse(
-            job_id=job.id,
-            tenant_id=job.tenant_id,
-            owner_user_id=job.owner_user_id,
-            status=JobStatus(job.status),
-        )
-    except Exception:
-        raise
 
 
 @router.get("/artifacts/{artifact_id}", response_model=SecuredArtifactResponse)

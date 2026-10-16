@@ -66,6 +66,7 @@ class GateRepository(BaseRepository[Gate]):
         user_id: uuid.UUID,
         membership_id: uuid.UUID,
         tenant_admin: bool = False,
+        for_update: bool = False,
     ) -> Gate | None:
         """Retrieve a gate only through its authorized parent job scope."""
         try:
@@ -84,10 +85,47 @@ class GateRepository(BaseRepository[Gate]):
                     .exists()
                 )
                 statement = statement.where((Job.owner_user_id == user_id) | member_access)
+            if for_update:
+                statement = statement.with_for_update(of=Gate)
             result = await self.session.execute(statement)
             return result.scalar_one_or_none()
         except Exception as exc:
             raise self._translate_error("get_by_id_scoped", exc) from exc
+
+    async def list_gates_by_job_scoped(
+        self,
+        *,
+        job_id: uuid.UUID,
+        tenant_id: uuid.UUID,
+        user_id: uuid.UUID,
+        membership_id: uuid.UUID,
+        tenant_admin: bool = False,
+        state: str | None = None,
+    ) -> list[Gate]:
+        """List gates for a job scoped to tenant and user permissions."""
+        try:
+            statement = (
+                select(Gate)
+                .join(Job, Job.id == Gate.job_id)
+                .where(Gate.job_id == job_id, Job.tenant_id == tenant_id)
+                .order_by(Gate.requested_at.asc())
+            )
+            if not tenant_admin:
+                member_access = (
+                    select(JobMember.id)
+                    .where(
+                        JobMember.job_id == Job.id,
+                        JobMember.membership_id == membership_id,
+                    )
+                    .exists()
+                )
+                statement = statement.where((Job.owner_user_id == user_id) | member_access)
+            if state:
+                statement = statement.where(Gate.state == state)
+            result = await self.session.execute(statement)
+            return list(result.scalars().all())
+        except Exception as exc:
+            raise self._translate_error("list_gates_by_job_scoped", exc) from exc
 
     async def _list_gates_by_job_unscoped(
         self,

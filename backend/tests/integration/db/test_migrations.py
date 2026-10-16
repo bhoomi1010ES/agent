@@ -12,6 +12,7 @@ from sqlalchemy.engine import Connection, Engine
 
 import modernization_platform.db.models  # noqa: F401
 from modernization_platform.db.base import Base
+from tests.integration.db.conftest import _PORT_AVAILABLE, _skip_or_fail_database
 
 TEST_DB_URL = os.getenv(
     "DATABASE_TEST_URL",
@@ -56,7 +57,21 @@ def alembic_config() -> Config:
 def test_migration_lifecycle(alembic_config: Config) -> None:
     """Verify clean upgrade, downgrade, and restoration of the PostgreSQL schema."""
     _assert_dedicated_test_database(TEST_DB_URL)
+    if not _PORT_AVAILABLE:
+        _skip_or_fail_database(
+            f"PostgreSQL server is not reachable at {TEST_DB_URL}. "
+            "Configure DATABASE_TEST_URL in .env to run integration tests against your local pgAdmin database."
+        )
     engine = create_engine(_sync_database_url(TEST_DB_URL))
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+    except Exception as exc:
+        engine.dispose()
+        _skip_or_fail_database(
+            f"PostgreSQL test database not accessible ({exc}). "
+            "Ensure the database exists in pgAdmin and valid credentials are set in DATABASE_TEST_URL."
+        )
     expected_tables = {
         "job",
         "artifact",

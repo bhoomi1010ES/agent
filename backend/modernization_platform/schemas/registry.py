@@ -5,6 +5,7 @@ from collections.abc import Mapping
 from modernization_platform.core.decorators import log_errors
 from modernization_platform.schemas.agent_artifacts import (
     AgentArtifact,
+    ChangeSet,
     CharacterizationSuite,
     ConversionPlan,
     EquivalenceReport,
@@ -12,6 +13,7 @@ from modernization_platform.schemas.agent_artifacts import (
     JobReport,
     LegacyModel,
     RepoInventory,
+    ReviewReport,
     SchemaPlan,
     TargetBlueprint,
 )
@@ -82,7 +84,9 @@ def _build_default_registry() -> ArtifactContractRegistry:
         (ArtifactType.CONVERSION_PLAN, ConversionPlan),
         (ArtifactType.CHARACTERIZATION_SUITE, CharacterizationSuite),
         (ArtifactType.SCHEMA_PLAN, SchemaPlan),
+        (ArtifactType.CHANGE_SET, ChangeSet),
         (ArtifactType.EQUIVALENCE_REPORT, EquivalenceReport),
+        (ArtifactType.REVIEW_REPORT, ReviewReport),
         (ArtifactType.JOB_REPORT, JobReport),
     ):
         registry.register(artifact_type, "1.0.0", model)

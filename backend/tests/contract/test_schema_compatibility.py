@@ -54,3 +54,9 @@ def test_registry_rejects_duplicate_registration() -> None:
     registry.register(ArtifactType.REPO_INVENTORY, "1.0.0", RepoInventory)
     with pytest.raises(ArtifactRegistryError):
         registry.register(ArtifactType.REPO_INVENTORY, "1.0.0", RepoInventory)
+
+
+def test_all_eleven_artifact_types_are_registered_for_v1() -> None:
+    """All 11 canonical artifact types defined in TDD have version 1.0.0 registered."""
+    for artifact_type in ArtifactType:
+        assert artifact_registry.supported_versions(artifact_type) == ("1.0.0",)
